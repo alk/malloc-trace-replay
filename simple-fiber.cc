@@ -37,54 +37,67 @@ static void must_swapcontext(ucontext_t* old, ucontext_t *newc) {
   }
 }
 
-static __attribute__((noinline)) void setup_context(ucontext_t* place,
-                                                    ucontext_t* tmp,
-                                                    bool *to_clear,
-                                                    const std::function<void ()>& body) {
-  constexpr int kStackSpace = 4 << 10;
+static void * volatile some_noopt_ptr;
+
+static void call_function(std::function<void ()>* body) {
+  (*body)();
+}
+
+static void (* volatile call_function_ptr)(std::function<void ()>*) = call_function;
+
+namespace {
+template <typename B>
+void no_inline(B b) {
+  std::function<void ()> f{b};
+  call_function_ptr(&f);
+}
+} // namespace
+
+static void park_thread(std::mutex *m, std::condition_variable* c,
+                        bool *shutdown_flag, bool *done_flag) {
+  constexpr int kStackSpace = 512;
   char some_stack_space[kStackSpace];
 
+  some_noopt_ptr = &some_stack_space;
   memset(some_stack_space, 0, sizeof(kStackSpace));
-  stack_space_noopt = &some_stack_space;
 
-  *to_clear = false;
-  memset(place, 0, sizeof(*place));
-  must_getcontext(place);
-  must_swapcontext(place, tmp);
-
-  body();
-
-  SimpleFiber::SwapInto(nullptr);
-}
-
-static void sc(ucontext_t* place, bool* volatile flag,
-               const std::function<void ()>& body) {
-  ucontext_t tmp;
-  memset(&tmp, 0, sizeof(tmp));
-  must_getcontext(&tmp);
-  while (*flag) {
-    setup_context(place, &tmp, flag, body);
+  std::unique_lock<std::mutex> g(*m);
+  *done_flag = true;
+  c->notify_all();
+  while (!*shutdown_flag) {
+    c->wait(g);
   }
 }
 
-namespace simple_fiber_hidden {
+static void get_context_and_switch(ucontext_t *place,
+                                   bool *first_time,
+                                   const std::function<void ()>& body) {
+  constexpr int kStackOffset = 4 << 10;
+  char some_stack_space[kStackOffset];
+  some_noopt_ptr = &some_stack_space;
+  memset(some_stack_space, 0, sizeof(kStackOffset));
 
-void (* volatile set_context_fn)(ucontext_t* place,
-                                 bool * volatile to_clear,
-                                 const std::function<void ()>& body) = sc;
-} // namespace simple_fiber_hidden
+  must_getcontext(place);
+  if (!*first_time) {
+    body();
+    SimpleFiber::SwapInto(nullptr);
+    abort();
+  }
+}
 
 void SimpleFiber::thread_body(SimpleFiber* it, bool *done) {
-  bool in_setup = true;
-  simple_fiber_hidden::set_context_fn(
-    &it->context_, &in_setup, it->body_);
+  bool first_time = true;
 
-  std::unique_lock<std::mutex> g(it->m_);
-  *done = true;
-  it->c_.notify_all();
-  while (!it->shutdown_flag) {
-    it->c_.wait(g);
-  }
+  no_inline([&] () {
+      get_context_and_switch(&it->context_, &first_time, it->body_);
+    });
+
+  first_time = false;
+
+  no_inline([&] () {
+      park_thread(&it->m_, &it->c_, &it->shutdown_flag, done);
+    });
+  some_noopt_ptr = &first_time;
 }
 
 SimpleFiber::SimpleFiber(const std::function<void ()>& body) : body_(body) {
@@ -109,7 +122,7 @@ SimpleFiber::~SimpleFiber() {
   thread_->join();
 }
 
-SimpleFiber* SimpleFiber::SwapInto(SimpleFiber* target) {
+void SimpleFiber::SwapInto(SimpleFiber* target) {
   SimpleFiber* old = ::current;
   ucontext_t* target_context = fibers_context(target);
   ucontext_t* old_context = fibers_context(old);

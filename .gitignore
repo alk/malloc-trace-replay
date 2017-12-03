@@ -13,6 +13,7 @@
 /config.guess
 /config.sub
 /debian/changelog
+/fiber_test
 /replay
 /test-driver
 /test_dump

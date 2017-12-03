@@ -16,7 +16,7 @@ public:
   ~SimpleFiber();
 
   static SimpleFiber* current();
-  static SimpleFiber* SwapInto(SimpleFiber *target);
+  static void SwapInto(SimpleFiber *target);
 private:
   static void thread_body(SimpleFiber *it, bool* done);
   static ucontext_t* fibers_context(SimpleFiber* it);

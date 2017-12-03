@@ -99,8 +99,8 @@ __asm__(".pushsection .text; .globl swapcontext_light\n"
 
 #else
 
-extern "C" void swapcontext_light(ucontext_t *ctx, ucontext_t *ctx2) {
-  swapcontext(ctx, ctx2);
+extern "C" int swapcontext_light(ucontext_t *ctx, ucontext_t *ctx2) {
+	return swapcontext(ctx, ctx2);
 }
 
 #endif // ! gcc & x86-64
