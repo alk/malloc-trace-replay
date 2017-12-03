@@ -30,8 +30,6 @@ void context_stuff_declaration(ucontext_t *ctx) {
 	swapcontext_light(ctx, nullptr);
 }
 
-// FIXME: this has totally screwed up unwind info (same holds for
-// glibc's swapcontext)
 __asm__(".pushsection .text; .globl swapcontext_light\n"
 	".type swapcontext_light, @function\n"
 "swapcontext_light:\n"
@@ -48,21 +46,52 @@ __asm__(".pushsection .text; .globl swapcontext_light\n"
 	"\tleaq     8(%rsp), %rcx\n"                /* Exclude the return address.  */
 	"\tmovq     %rcx, oRSP(%rdi)\n"
 
+	// to have decent and still simple unwind info we first 'push'
+	// all registers into target stack, then switch stack, then
+	// pop everything
 	"\tmovq     oRSP(%rsi), %rdx\n"
-	"\tsubq     $8, %rdx\n"
+	"\tsubq     $56, %rdx\n"
+
 	"\tmovq     oRIP(%rsi), %rcx\n"
-	"\tmovq     %rcx, (%rdx)\n"
+	"\tmovq     %rcx, 48(%rdx)\n"
 
-	"\tmovq     oRBX(%rsi), %rbx\n"
-	"\tmovq     oRBP(%rsi), %rbp\n"
-	"\tmovq     oR12(%rsi), %r12\n"
-	"\tmovq     oR13(%rsi), %r13\n"
-	"\tmovq     oR14(%rsi), %r14\n"
-	"\tmovq     oR15(%rsi), %r15\n"
+#define P(reg, offset) \
+	"\tmovq     oR" #reg "(%rsi), %rcx\n" \
+	"\tmovq     %rcx, " #offset "(%rdx)\n"
+
+	P(BP, 40)
+	P(BX, 32)
+	P(12, 24)
+	P(13, 16)
+	P(14, 8)
+	P(15, 0)
+
+#undef P
+
 	"\tmovq     %rdx, %rsp\n"
+	"\t.cfi_def_cfa_offset 56\n"
+	"\t.cfi_offset 15, -56\n"
+	"\t.cfi_offset 14, -48\n"
+	"\t.cfi_offset 13, -40\n"
+	"\t.cfi_offset 12, -32\n"
+	"\t.cfi_offset 3, -24\n"
+	"\t.cfi_offset 6, -16\n"
 
-	"\txorl     %eax, %eax\n"
+	"\tpopq %r15\n"
+	"\t.cfi_def_cfa_offset 48\n"
+	"\tpopq %r14\n"
+	"\t.cfi_def_cfa_offset 40\n"
+	"\tpopq %r13\n"
+	"\t.cfi_def_cfa_offset 32\n"
+	"\tpopq %r12\n"
+	"\t.cfi_def_cfa_offset 24\n"
+	"\tpopq %rbx\n"
+	"\t.cfi_def_cfa_offset 16\n"
+	"\tpopq %rbp\n"
+	"\t.cfi_def_cfa_offset 8\n"
+	"\txorl %eax, %eax\n"
 	"\tret\n"
+
 	".cfi_endproc\n"
 	".size swapcontext_light, .-swapcontext_light\n"
 	".popsection\n"
