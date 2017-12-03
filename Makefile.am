@@ -20,6 +20,13 @@ test_dump_LDFLAGS = -pthread
 replay.capnp.c++ replay.capnp.h : replay.capnp
 	$(CAPNP) compile -oc++ replay.capnp
 
+noinst_PROGRAMS += fiber_test
+
+fiber_test_SOURCES = simple-fiber.cc simple-fiber.h \
+	swapcontext_light.cc fiber_test.cc
+fiber_test_CXXFLAGS = -pthread
+fiber_test_LDFLAGS = -pthread
+
 # prevent gnu make from creating implicit rule for replay.capnp from
 # replay.capnp.c++
 replay.capnp: ;
