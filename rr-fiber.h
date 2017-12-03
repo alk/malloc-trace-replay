@@ -32,6 +32,7 @@ public:
 private:
   PooledFiber *engine_;
   RRFiber *next_{};
+  RRFiber **pprev_{};
   bool finished{};
   bool joined{};
 
@@ -41,8 +42,21 @@ private:
   static RRFiber *being_joined;
 
   static void append_runnable(RRFiber* f) {
+    assert(f->next_ == nullptr);
+    assert(*runnable_list_end == nullptr);
     *runnable_list_end = f;
+    f->pprev_ = runnable_list_end;
     runnable_list_end = &f->next_;
+  }
+
+  static void remove_runnable(RRFiber *f) {
+    assert(f->pprev_ != nullptr);
+    *f->pprev_ = f->next_;
+    if (f->next_) {
+      f->next_->pprev_ = f->pprev_;
+    }
+    f->next_ = nullptr;
+    f->pprev_ = nullptr;
   }
 
   static RRFiber* pop_runnable() {
@@ -50,12 +64,7 @@ private:
     if (rv == nullptr) {
       return rv;
     }
-    runnable_list = rv->next_;
-    rv->next_ = nullptr;
-    if (runnable_list == nullptr) {
-      assert(runnable_list_end == &rv->next_);
-      runnable_list_end = &runnable_list;
-    }
+    remove_runnable(rv);
     return rv;
   }
 };

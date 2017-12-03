@@ -40,6 +40,7 @@ RRFiber::RRFiber(const std::function<void ()>& body) {
       body();
       finished = true;
       if (being_joined == this) {
+        being_joined = nullptr;
         current = nullptr;
       } else {
         Yield();
@@ -57,7 +58,10 @@ RRFiber::~RRFiber() {
 void RRFiber::Join() {
   assert(current == nullptr);
   if (!finished) {
-    Yield();
+    being_joined = this;
+    current = this;
+    remove_runnable(this);
+    SimpleFiber::SwapInto(engine_);
     assert(finished);
   }
   joined = true;
@@ -66,13 +70,13 @@ void RRFiber::Join() {
 
 void RRFiber::Yield() {
   RRFiber *old_current = current;
+  RRFiber *new_current = pop_runnable();
+  assert(new_current != old_current);
+
   if (old_current != nullptr && !old_current->finished) {
     append_runnable(old_current);
   }
-  RRFiber *new_current = pop_runnable();
-  if (new_current == old_current) {
-    return;
-  }
+
   current = new_current;
   if (new_current == nullptr) {
     SimpleFiber::SwapInto(nullptr);
