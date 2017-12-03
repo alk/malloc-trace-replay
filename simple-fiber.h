@@ -13,7 +13,7 @@
 class SimpleFiber {
 public:
   explicit SimpleFiber(const std::function<void ()>& body);
-  ~SimpleFiber();
+  virtual ~SimpleFiber();
 
   static SimpleFiber* current();
   static void SwapInto(SimpleFiber *target);

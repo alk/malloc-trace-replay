@@ -20,6 +20,8 @@
 
 #include "replay.capnp.h"
 
+#include "simple-fiber.h"
+
 #ifdef HAVE_BUILTIN_EXPECT
 #define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)
 #define PREDICT_FALSE(x) __builtin_expect(!!(x), 0)
@@ -27,6 +29,7 @@
 #define PREDICT_TRUE(x) (x)
 #define PREDICT_FALSE(x) (x)
 #endif
+
 
 static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
 

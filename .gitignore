@@ -16,6 +16,7 @@
 /debian/changelog
 /fiber_test
 /replay
+/rr_fiber_test
 /test-driver
 /test_dump
 Makefile
