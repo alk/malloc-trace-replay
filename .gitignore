@@ -1,3 +1,4 @@
+*.a
 *.gcda
 *.o
 .deps
