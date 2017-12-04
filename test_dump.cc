@@ -63,6 +63,18 @@ static void write_register(int reg, void *val) {
   registers[reg] = val;
 }
 
+#ifdef NOOP_MALLOC
+
+extern "C" {
+  void* some_location[2];
+}
+
+#define malloc(a) ((a), (reinterpret_cast<void *>(&some_location[0])))
+#define free(a) do {(void)(a);} while (0)
+#define realloc(a, b) malloc(b)
+
+#endif
+
 static void replay_instructions(const ::capnp::List<::replay::Instruction>::Reader& instructions) {
   for (auto instr : instructions) {
     // printf("%s\n", capnp::prettyPrint(instr).flatten().cStr());
@@ -93,6 +105,7 @@ static void replay_instructions(const ::capnp::List<::replay::Instruction>::Read
       if (ptr == nullptr) {
         abort();
       }
+      memset(ptr, 0, 8);
       write_register(reg, ptr);
       write_register(old_reg, nullptr);
       break;
@@ -201,6 +214,9 @@ int main(int argc, char **argv) {
 
     // printf("end of batch!\n\n\n");
   }
+
+  printf("processed total %lld malloc ops (aka instructions)\n",
+         (long long) total_instructions);
 
   return 0;
 }
