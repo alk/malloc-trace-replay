@@ -39,12 +39,13 @@ RRFiber::RRFiber(const std::function<void ()>& body) {
   engine_ = PooledFiber::New([body, this] () {
       body();
       finished = true;
-      if (being_joined == this) {
-        being_joined = nullptr;
-        current = nullptr;
-      } else {
+      if (being_joined != this) {
         Yield();
+        assert(being_joined == this);
       }
+      being_joined = nullptr;
+      current = nullptr;
+      actually_joined = true;
       // pooled fiber does SimpleFiber::SwapInto(nullptr);
     });
   append_runnable(this);
@@ -53,14 +54,20 @@ RRFiber::RRFiber(const std::function<void ()>& body) {
 RRFiber::~RRFiber() {
   assert(finished);
   assert(joined);
+  assert(actually_joined);
 }
 
 void RRFiber::Join() {
   assert(current == nullptr);
-  if (!finished) {
+  assert(being_joined == nullptr);
+  assert(!joined);
+  if (!actually_joined) {
     being_joined = this;
     current = this;
-    remove_runnable(this);
+    if (!finished) {
+      remove_runnable(this);
+    }
+    assert(engine_ != nullptr);
     SimpleFiber::SwapInto(engine_);
     assert(finished);
   }
@@ -70,17 +77,24 @@ void RRFiber::Join() {
 
 void RRFiber::Yield() {
   RRFiber *old_current = current;
-  RRFiber *new_current = pop_runnable();
-  assert(new_current != old_current);
+  assert(old_current != nullptr);
 
-  if (old_current != nullptr && !old_current->finished) {
+  if (!old_current->finished) {
     append_runnable(old_current);
+  }
+
+  RRFiber *new_current = pop_runnable();
+
+  if (new_current == old_current) {
+    return;
   }
 
   current = new_current;
   if (new_current == nullptr) {
+    assert(runnable_list == nullptr);
     SimpleFiber::SwapInto(nullptr);
   } else {
+    assert(new_current->engine_ != nullptr);
     SimpleFiber::SwapInto(new_current->engine_);
   }
   assert(current == old_current);

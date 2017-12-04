@@ -35,6 +35,7 @@ private:
   RRFiber **pprev_{};
   bool finished{};
   bool joined{};
+  bool actually_joined{};
 
   static RRFiber *current;
   static RRFiber *runnable_list;
@@ -54,6 +55,8 @@ private:
     *f->pprev_ = f->next_;
     if (f->next_) {
       f->next_->pprev_ = f->pprev_;
+    } else {
+      runnable_list_end = f->pprev_;
     }
     f->next_ = nullptr;
     f->pprev_ = nullptr;

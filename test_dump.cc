@@ -6,6 +6,8 @@
 #include <assert.h>
 
 #include <sys/time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sched.h>
 
 #include <atomic>
@@ -20,7 +22,7 @@
 
 #include "replay.capnp.h"
 
-#include "simple-fiber.h"
+#include "rr-fiber.h"
 
 #ifdef HAVE_BUILTIN_EXPECT
 #define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)
@@ -37,24 +39,21 @@ static uintptr_t registers[1024 << 10];
 
 static constexpr int kSpins = 1024;
 
+static volatile bool verbose_yields;
+
 static void *read_register(int reg) {
   uintptr_t rv = registers[reg];
 
   if (PREDICT_FALSE(rv == 0)) {
-    std::atomic<uintptr_t>* place = reinterpret_cast<std::atomic<uintptr_t>*>(registers + reg);
-    for (int i = 0; i < kSpins; i++) {
-      rv = place->load(std::memory_order_seq_cst);
-      if (rv != 0) {
-        return reinterpret_cast<void *>(rv);
-      }
-
-#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
-  __asm__ __volatile__("rep; nop" : : );
-#endif
-    }
     do {
-      sched_yield();
-    } while ((rv = place->load(std::memory_order_seq_cst)) == 0);
+      if (verbose_yields) {
+        printf("%p: yielding for register %d\n", SimpleFiber::current(), reg);
+      }
+      RRFiber::Yield();
+    } while ((rv = registers[reg]) == 0);
+    if (verbose_yields) {
+      printf("%p: done waiting %d\n", SimpleFiber::current(), reg);
+    }
   }
 
   return reinterpret_cast<void *>(rv);
@@ -70,11 +69,6 @@ static void replay_instructions(const ::capnp::List<::replay::Instruction>::Read
     auto reg = instr.getReg();
     switch (instr.getType()) {
     case replay::Instruction::Type::MALLOC: {
-      // 312824
-
-      // if (registers[reg] != 0) {
-      //   asm volatile ("int $3");
-      // }
       assert(registers[reg] == 0);
       auto ptr = malloc(instr.getSize());
       if (ptr == nullptr) {
@@ -122,8 +116,18 @@ uint64_t nanos() {
   return (tv.tv_usec + uint64_t{1000000} * tv.tv_sec) * uint64_t{1000};
 }
 
-int main() {
-  ::kj::FdInputStream fd0(0);
+int main(int argc, char **argv) {
+  int fd = 0;
+
+  if (argc > 1) {
+    fd = open(argv[1], O_RDONLY);
+    if (fd < 0) {
+      perror("open");
+      abort();
+    }
+  }
+
+  ::kj::FdInputStream fd0(fd);
   ::kj::BufferedInputStreamWrapper input(
     fd0,
     kj::arrayPtr(buffer_space, sizeof(buffer_space)));
@@ -135,34 +139,28 @@ int main() {
   while (input.tryGetReadBuffer() != nullptr) {
     ::capnp::PackedMessageReader message(input);
     // ::capnp::InputStreamMessageReader message(input);
-    auto batch = message.getRoot<replay::Batch>();
 
-    std::vector<std::thread> threads;
+    auto batch = message.getRoot<replay::Batch>();
 
     auto threadsList = batch.getThreads();
 
     assert(threadsList.size() > 0);
 
-    auto threadsListEnd = threadsList.end();
+    std::vector<std::unique_ptr<RRFiber>> fibers;
 
-    for (auto iter = threadsList.begin() + 1; iter != threadsListEnd; ++iter) {
-      auto threadInfo = *iter;
+    fibers.reserve(threadsList.size());
+
+    for (auto threadInfo : threadsList) {
       // printf("thread: %lld\n", (long long)threadInfo.getThreadID());
       auto instructions = threadInfo.getInstructions();
       total_instructions += instructions.size();
-      threads.emplace_back(std::thread(replay_instructions, instructions));
+      fibers.emplace_back(new RRFiber([instructions] () {
+            replay_instructions(instructions);
+          }));
     }
 
-    {
-      auto threadInfo = *(threadsList.begin());
-      auto instructions = threadInfo.getInstructions();
-      total_instructions += instructions.size();
-      // printf("1thread: %lld\n", (long long)threadInfo.getThreadID());
-      replay_instructions(instructions);
-    }
-
-    for (auto &t : threads) {
-      t.join();
+    for (auto &f : fibers) {
+      f->Join();
     }
 
     if (total_instructions - printed_instructions > (4 << 20)) {

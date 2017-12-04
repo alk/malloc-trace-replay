@@ -21,7 +21,7 @@ libsimple_fiber_a_SOURCES = simple-fiber.cc simple-fiber.h swapcontext_light.cc
 librr_fiber_a_SOURCES = rr-fiber.cc rr-fiber.h
 
 test_dump_SOURCES = test_dump.cc replay.capnp.c++ replay.capnp.h
-test_dump_LDADD =  @capnp_LIBS@
+test_dump_LDADD =  @capnp_LIBS@ librr_fiber.a libsimple_fiber.a
 test_dump_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 
 replay.capnp.c++ replay.capnp.h : replay.capnp
