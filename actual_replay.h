@@ -17,6 +17,8 @@ public:
   uint64_t allocate_id();
   void free_id(uint64_t id);
 
+  bool is_free_at(uint64_t id);
+
 private:
 
   typedef std::vector<uint64_t> bvector;
@@ -130,12 +132,23 @@ inline uint64_t IdTree::allocate_id() {
     unsigned p0 = bsf(level0[pos1]);
     pos0 = pos1 * 64 + p0;
   }
+  assert(is_free_at(pos0));
   set_bit(pos0, false);
   return pos0;
 }
 
 inline void IdTree::free_id(uint64_t id) {
+  assert(!is_free_at(id));
   set_bit(id, true);
+  assert(is_free_at(id));
+}
+
+inline bool IdTree::is_free_at(uint64_t id) {
+  auto divpos = id / 64;
+  assert(divpos < level0.size());
+  uint64_t word = level0[divpos];
+  uint64_t mask = uint64_t{1} << (id % 64);
+  return (word & mask) != 0;
 }
 
 struct Instruction {
@@ -145,7 +158,8 @@ struct Instruction {
 
   uint64_t type:8;
   uint64_t reg:56;
-  uint64_t size;
+  uint64_t size{};
+  uint64_t old_reg{};
   // alignment...
 
   static Instruction Malloc(int reg, uint64_t size) {
@@ -155,18 +169,18 @@ struct Instruction {
     rv.size = size;
     return rv;
   }
-  static Instruction Realloc(int reg, uint64_t new_size) {
+  static Instruction Realloc(int reg, int old_reg, uint64_t new_size) {
     Instruction rv;
     rv.type = kRealloc;
     rv.reg = reg;
     rv.size = new_size;
+    rv.old_reg = old_reg;
     return rv;
   }
   static Instruction Free(int reg) {
     Instruction rv;
     rv.type = kFree;
     rv.reg = reg;
-    rv.size = 0;
     return rv;
   }
 };
@@ -179,7 +193,9 @@ public:
     std::vector<Instruction> instructions;
 
     ThreadState(uint64_t thread_id, bool* live_ptr)
-      : thread_id(thread_id), live_ptr(live_ptr) {}
+      : thread_id(thread_id), live_ptr(live_ptr) {
+      instructions.reserve(512);
+    }
   };
   typedef std::function<int (const void *, size_t)> writer_fn_t;
   ReplayDumper(const writer_fn_t& writer_fn);

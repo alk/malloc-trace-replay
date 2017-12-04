@@ -38,13 +38,6 @@ void ReplayDumper::record_malloc(
   allocated_[tok] = reg;
   state->instructions.push_back(Instruction::Malloc(reg, size));
 
-  // if (allocated_this_iteration.size() <= reg) {
-  //   allocated_this_iteration.resize(reg);
-  // }
-
-  // assert(allocated_this_iteration[reg] == false);
-  // allocated_this_iteration[reg] = true;
-
   after_record();
 }
 
@@ -54,6 +47,8 @@ void ReplayDumper::record_free(
   assert(allocated_.count(tok) == 1);
   auto reg = allocated_[tok];
   allocated_.erase(tok);
+
+  assert(!ids_space_.is_free_at(reg));
   freed_this_iteration_.insert(reg);
 
   state->instructions.push_back(Instruction::Free(reg));
@@ -66,12 +61,16 @@ void ReplayDumper::record_realloc(
   uint64_t new_tok, uint64_t new_size) {
 
   assert(allocated_.count(tok) == 1);
-
   auto reg = allocated_[tok];
-  allocated_[new_tok] = reg;
   allocated_.erase(tok);
 
-  state->instructions.push_back(Instruction::Realloc(reg, new_size));
+  assert(!ids_space_.is_free_at(reg));
+  freed_this_iteration_.insert(reg);
+
+  auto new_reg = ids_space_.allocate_id();
+  allocated_[new_tok] = new_reg;
+
+  state->instructions.push_back(Instruction::Realloc(new_reg, reg, new_size));
 
   after_record();
 }
@@ -119,9 +118,13 @@ void ReplayDumper::flush_chunk() {
     int instruction_idx = 0;
     for (auto &instr : state.instructions) {
       auto builder = instructions[instruction_idx++];
-      builder.setType(static_cast<replay::Instruction::Type>(instr.type));
+      auto type = static_cast<replay::Instruction::Type>(instr.type);
+      builder.setType(type);
       builder.setReg(instr.reg);
       builder.setSize(instr.size);
+      if (type == replay::Instruction::Type::REALLOC) {
+        builder.setOldReg(instr.old_reg);
+      }
     }
   }
 

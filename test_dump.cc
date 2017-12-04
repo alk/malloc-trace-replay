@@ -5,8 +5,10 @@
 #include <malloc.h>
 #include <assert.h>
 
+#include <unistd.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <sched.h>
 
@@ -24,7 +26,7 @@
 
 #include "rr-fiber.h"
 
-#ifdef HAVE_BUILTIN_EXPECT
+#ifdef __GNUC__
 #define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)
 #define PREDICT_FALSE(x) __builtin_expect(!!(x), 0)
 #else
@@ -33,34 +35,32 @@
 #endif
 
 
-static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
+static void** registers;
 
-static uintptr_t registers[1024 << 10];
+static constexpr int kMaxRegisters = 1 << 30;
 
-static constexpr int kSpins = 1024;
+// static volatile bool verbose_yields;
 
-static volatile bool verbose_yields;
+static void* read_register(int reg) {
+  void* rv = registers[reg];
 
-static void *read_register(int reg) {
-  uintptr_t rv = registers[reg];
-
-  if (PREDICT_FALSE(rv == 0)) {
+  if (PREDICT_FALSE(rv == nullptr)) {
     do {
-      if (verbose_yields) {
-        printf("%p: yielding for register %d\n", SimpleFiber::current(), reg);
-      }
+      // if (verbose_yields) {
+      //   printf("%p: yielding for register %d\n", SimpleFiber::current(), reg);
+      // }
       RRFiber::Yield();
     } while ((rv = registers[reg]) == 0);
-    if (verbose_yields) {
-      printf("%p: done waiting %d\n", SimpleFiber::current(), reg);
-    }
+    // if (verbose_yields) {
+    //   printf("%p: done waiting %d\n", SimpleFiber::current(), reg);
+    // }
   }
 
-  return reinterpret_cast<void *>(rv);
+  return rv;
 }
 
 static void write_register(int reg, void *val) {
-  registers[reg] = reinterpret_cast<uintptr_t>(val);
+  registers[reg] = val;
 }
 
 static void replay_instructions(const ::capnp::List<::replay::Instruction>::Reader& instructions) {
@@ -69,7 +69,7 @@ static void replay_instructions(const ::capnp::List<::replay::Instruction>::Read
     auto reg = instr.getReg();
     switch (instr.getType()) {
     case replay::Instruction::Type::MALLOC: {
-      assert(registers[reg] == 0);
+      assert(registers[reg] == nullptr);
       auto ptr = malloc(instr.getSize());
       if (ptr == nullptr) {
         abort();
@@ -83,16 +83,22 @@ static void replay_instructions(const ::capnp::List<::replay::Instruction>::Read
       write_register(reg, nullptr);
       break;
     case replay::Instruction::Type::REALLOC: {
-      auto ptr = read_register(reg);
+      auto old_reg = instr.getOldReg();
+      auto ptr = read_register(old_reg);
+
+      assert(registers[old_reg] != nullptr);
+      assert(registers[reg] == nullptr);
+
       ptr = realloc(ptr, instr.getSize());
       if (ptr == nullptr) {
         abort();
       }
       write_register(reg, ptr);
+      write_register(old_reg, nullptr);
       break;
     }
     case replay::Instruction::Type::MEMALLIGN: {
-      assert(registers[reg] == 0);
+      assert(registers[reg] == nullptr);
       auto ptr = memalign(instr.getAlignment(), instr.getSize());
       if (ptr == nullptr) {
         abort();
@@ -116,7 +122,31 @@ uint64_t nanos() {
   return (tv.tv_usec + uint64_t{1000000} * tv.tv_sec) * uint64_t{1000};
 }
 
+static void mmap_registers() {
+  size_t pagesize = getpagesize();
+  size_t size_needed = (sizeof(void *) * kMaxRegisters + pagesize - 1) & ~(pagesize - 1);
+  auto mmap_result = mmap(0, size_needed + pagesize,
+                          PROT_READ|PROT_WRITE,
+                          MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE,
+                          0, 0);
+  if (mmap_result == MAP_FAILED) {
+    perror("mmap");
+    abort();
+  }
+  auto registers_ptr = static_cast<char *>(mmap_result);
+  int rv = mprotect(registers_ptr + size_needed, pagesize, PROT_NONE);
+  if (rv != 0) {
+    perror("mprotect");
+    abort();
+  }
+  registers = static_cast<void **>(mmap_result);
+}
+
+static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
+
 int main(int argc, char **argv) {
+  mmap_registers();
+
   int fd = 0;
 
   if (argc > 1) {
@@ -141,13 +171,10 @@ int main(int argc, char **argv) {
     // ::capnp::InputStreamMessageReader message(input);
 
     auto batch = message.getRoot<replay::Batch>();
-
     auto threadsList = batch.getThreads();
-
     assert(threadsList.size() > 0);
 
     std::vector<std::unique_ptr<RRFiber>> fibers;
-
     fibers.reserve(threadsList.size());
 
     for (auto threadInfo : threadsList) {
@@ -166,9 +193,10 @@ int main(int argc, char **argv) {
     if (total_instructions - printed_instructions > (4 << 20)) {
       uint64_t total_nanos = nanos() - nanos_start;
       printed_instructions = total_instructions;
-      printf("total_instructions = %lld\nrate = %f instr/sec\n",
+      printf("total_instructions = %lld\nrate = %f ops/sec\n",
              (long long)total_instructions,
              (double)total_instructions * 1E9 / total_nanos);
+      printf("some ~last reg: %d\n", threadsList[0].getInstructions()[0].getReg());
     }
 
     // printf("end of batch!\n\n\n");

@@ -14,6 +14,7 @@ struct Instruction {
   reg @1 :UInt32;
   size @2 :UInt64;
   alignment @3 :UInt64;
+  oldReg @4: UInt32;
   # ts @4 :UInt64;
   # cpu @5 :UInt64;
 }

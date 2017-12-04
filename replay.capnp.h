@@ -41,7 +41,7 @@ struct Instruction {
 
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(e1db17f6470d97a8, 3, 0)
+    CAPNP_DECLARE_STRUCT_HEADER(e1db17f6470d97a8, 4, 0)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -105,6 +105,8 @@ public:
 
   inline  ::uint64_t getAlignment() const;
 
+  inline  ::uint32_t getOldReg() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -144,6 +146,9 @@ public:
 
   inline  ::uint64_t getAlignment();
   inline void setAlignment( ::uint64_t value);
+
+  inline  ::uint32_t getOldReg();
+  inline void setOldReg( ::uint32_t value);
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -399,6 +404,20 @@ inline  ::uint64_t Instruction::Builder::getAlignment() {
 inline void Instruction::Builder::setAlignment( ::uint64_t value) {
   _builder.setDataField< ::uint64_t>(
       ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint32_t Instruction::Reader::getOldReg() const {
+  return _reader.getDataField< ::uint32_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint32_t Instruction::Builder::getOldReg() {
+  return _builder.getDataField< ::uint32_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void Instruction::Builder::setOldReg( ::uint32_t value) {
+  _builder.setDataField< ::uint32_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
 }
 
 inline  ::uint64_t ThreadChunk::Reader::getThreadID() const {
