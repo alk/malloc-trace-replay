@@ -5,6 +5,8 @@ AM_CXXFLAGS = -pthread
 AM_LDFLAGS = -pthread
 
 CAPNP = @CAPNP@
+LD_RUN_PATH = @LD_RUN_PATH@
+export LD_RUN_PATH
 
 noinst_PROGRAMS = replay test_dump
 
