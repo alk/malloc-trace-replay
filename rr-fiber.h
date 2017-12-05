@@ -25,10 +25,13 @@ private:
 class RRFiber {
 public:
   RRFiber(const std::function<void ()>& body);
-  ~RRFiber();
+  virtual ~RRFiber();
 
   static void Yield();
-  void Join();
+  static RRFiber* Current() {
+    return current;
+  }
+  virtual void Join();
 private:
   PooledFiber *engine_;
   RRFiber *next_{};

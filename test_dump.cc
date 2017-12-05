@@ -34,10 +34,81 @@
 #define PREDICT_FALSE(x) (x)
 #endif
 
+struct ThreadCacheState;
 
-static void** registers;
+extern "C" {
+  bool release_malloc_thread_cache(ThreadCacheState** place_state_here); // __attribute__((weak));
+  bool set_malloc_thread_cache(ThreadCacheState* state); // __attribute__((weak));
+}
+
+static void maybe_release_malloc_thread_cache(ThreadCacheState** place_state_here) {
+  release_malloc_thread_cache(place_state_here);
+}
+
+static void maybe_set_malloc_thread_cache(ThreadCacheState* state) {
+  set_malloc_thread_cache(state);
+}
+
+#define release_malloc_thread_cache(a) maybe_release_malloc_thread_cache(a)
+#define set_malloc_thread_cache(a) maybe_set_malloc_thread_cache(a)
+
+extern "C" void MallocExtension_GetStats(char* buffer, int buffer_length) __attribute__((weak));
+
+extern "C" void dump_malloc_stats() {
+  static char buffer[128 << 10];
+  MallocExtension_GetStats(buffer, sizeof(buffer));
+  printf("%s\n", buffer);
+}
+
+
+static void delete_malloc_state(ThreadCacheState* malloc_state) {
+  ThreadCacheState *old{};
+  release_malloc_thread_cache(&old);
+  set_malloc_thread_cache(malloc_state);
+  set_malloc_thread_cache(old);
+}
+
+struct ReplayFiber : public RRFiber {
+public:
+  ReplayFiber(const std::function<void ()>& body) : RRFiber(body) {}
+  ~ReplayFiber() {
+    if (malloc_state != nullptr) {
+      delete_malloc_state(malloc_state);
+    }
+  }
+
+  static ReplayFiber* Current() {
+    return static_cast<ReplayFiber*>(RRFiber::Current());
+  }
+
+  static void Yield() {
+    ThreadCacheState** place = &Current()->malloc_state;
+    assert(*place == nullptr);
+    release_malloc_thread_cache(place);
+
+    RRFiber::Yield();
+
+    assert(place == &Current()->malloc_state);
+
+    set_malloc_thread_cache(*place);
+    *place = nullptr;
+  }
+
+  virtual void Join() {
+    ThreadCacheState* top_malloc_state = nullptr;
+    release_malloc_thread_cache(&top_malloc_state);
+
+    RRFiber::Join();
+
+    set_malloc_thread_cache(top_malloc_state);
+  }
+
+  ThreadCacheState* malloc_state{};
+};
+
 
 static constexpr int kMaxRegisters = 1 << 30;
+static void** registers;
 
 // static volatile bool verbose_yields;
 
@@ -49,7 +120,7 @@ static void* read_register(int reg) {
       // if (verbose_yields) {
       //   printf("%p: yielding for register %d\n", SimpleFiber::current(), reg);
       // }
-      RRFiber::Yield();
+      ReplayFiber::Yield();
     } while ((rv = registers[reg]) == 0);
     // if (verbose_yields) {
     //   printf("%p: done waiting %d\n", SimpleFiber::current(), reg);
@@ -187,14 +258,14 @@ int main(int argc, char **argv) {
     auto threadsList = batch.getThreads();
     assert(threadsList.size() > 0);
 
-    std::vector<std::unique_ptr<RRFiber>> fibers;
+    std::vector<std::unique_ptr<ReplayFiber>> fibers;
     fibers.reserve(threadsList.size());
 
     for (auto threadInfo : threadsList) {
       // printf("thread: %lld\n", (long long)threadInfo.getThreadID());
       auto instructions = threadInfo.getInstructions();
       total_instructions += instructions.size();
-      fibers.emplace_back(new RRFiber([instructions] () {
+      fibers.emplace_back(new ReplayFiber([instructions] () {
             replay_instructions(instructions);
           }));
     }
