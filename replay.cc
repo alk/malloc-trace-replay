@@ -464,6 +464,7 @@ struct ReplayMachine {
     switch (ev.type) {
     case EventsEncoder::kEventMalloc:
     case EventsEncoder::kEventMemalign:
+    case EventsEncoder::kEventDeath:
       ready_events.push(t);
       break;
     case EventsEncoder::kEventFree:
@@ -498,7 +499,9 @@ struct ReplayMachine {
         assert(t->live);
         t->live = false;
         total_read++;
-        t->add_event(ev, total_read);
+        if (t->add_event(ev, total_read)) {
+          maybe_ready_event(ev, t);
+        }
         continue;
       }
       if (!is_interesting_event(ev)) {

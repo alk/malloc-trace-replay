@@ -38,16 +38,23 @@
 struct ThreadCacheState;
 
 extern "C" {
-  bool release_malloc_thread_cache(ThreadCacheState** place_state_here); // __attribute__((weak));
-  bool set_malloc_thread_cache(ThreadCacheState* state); // __attribute__((weak));
+  bool release_malloc_thread_cache(ThreadCacheState** place_state_here) __attribute__((weak));
+  bool set_malloc_thread_cache(ThreadCacheState* state) __attribute__((weak));
 }
 
+static const auto release_malloc_thread_cache_ptr = release_malloc_thread_cache;
+static const auto set_malloc_thread_cache_ptr = set_malloc_thread_cache;
+
 static void maybe_release_malloc_thread_cache(ThreadCacheState** place_state_here) {
-  release_malloc_thread_cache(place_state_here);
+  if (release_malloc_thread_cache_ptr) {
+    release_malloc_thread_cache_ptr(place_state_here);
+  }
 }
 
 static void maybe_set_malloc_thread_cache(ThreadCacheState* state) {
-  set_malloc_thread_cache(state);
+  if (set_malloc_thread_cache_ptr) {
+    set_malloc_thread_cache_ptr(state);
+  }
 }
 
 #define release_malloc_thread_cache(a) maybe_release_malloc_thread_cache(a)
@@ -260,6 +267,9 @@ int main(int argc, char **argv) {
     }
   }
 
+  printf("will%s use set/release_malloc_thread_cache\n",
+         set_malloc_thread_cache_ptr ? "" : " not");
+
   ::kj::FdInputStream fd0(fd);
   ::kj::BufferedInputStreamWrapper input(
     fd0,
@@ -314,12 +324,12 @@ int main(int argc, char **argv) {
       auto id = threadInfo.getThreadID();
       auto this_fiber = fibers[i].get();
 
-      assert(threadInfo.getInstructions().size() == 0 || this_fiber->malloc_state != nullptr);
+      // assert(threadInfo.getInstructions().size() == 0 || this_fiber->malloc_state != nullptr);
       if (threadInfo.getLive()) {
         fibers_states[id] = this_fiber->malloc_state;
         this_fiber->malloc_state = nullptr;
       } else {
-        printf("thread %lld dying\n", (long long)id);
+        // printf("thread %lld dying\n", (long long)id);
         fibers_states.erase(id);
       }
     }
@@ -330,7 +340,9 @@ int main(int argc, char **argv) {
       printf("total_instructions = %lld\nrate = %f ops/sec\n",
              (long long)total_instructions,
              (double)total_instructions * 1E9 / total_nanos);
-      printf("some ~last reg: %d\n", threadsList[0].getInstructions()[0].getReg());
+      printf("some ~last reg: %d, live threads: %d\n",
+             threadsList[0].getInstructions()[0].getReg(),
+             (int)fibers_states.size());
     }
   }
 
