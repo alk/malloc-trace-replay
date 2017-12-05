@@ -16,6 +16,7 @@
 #include <vector>
 #include <thread>
 #include <future>
+#include <unordered_map>
 
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -70,7 +71,7 @@ static void delete_malloc_state(ThreadCacheState* malloc_state) {
 
 struct ReplayFiber : public RRFiber {
 public:
-  ReplayFiber(const std::function<void ()>& body) : RRFiber(body) {}
+  ReplayFiber(const std::function<void ()>& body) : RRFiber(WrapBody(body)) {}
   ~ReplayFiber() {
     if (malloc_state != nullptr) {
       delete_malloc_state(malloc_state);
@@ -104,6 +105,20 @@ public:
   }
 
   ThreadCacheState* malloc_state{};
+
+private:
+  static std::function<void ()> WrapBody(const std::function<void ()>& body) {
+    return [body] () {
+      ThreadCacheState** place = &Current()->malloc_state;
+      if (*place != nullptr) {
+        set_malloc_thread_cache(*place);
+        *place = nullptr;
+      }
+      body();
+      assert(*place == nullptr);
+      release_malloc_thread_cache(place);
+    };
+  }
 };
 
 
@@ -228,6 +243,10 @@ static void mmap_registers() {
 
 static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
 
+extern "C" void dump_batch(::replay::Batch::Reader* reader) {
+  printf("%s\n", capnp::prettyPrint(*reader).flatten().cStr());
+}
+
 int main(int argc, char **argv) {
   mmap_registers();
 
@@ -250,11 +269,14 @@ int main(int argc, char **argv) {
   uint64_t printed_instructions = 0;
   uint64_t total_instructions = 0;
 
+  std::unordered_map<uint64_t, ThreadCacheState*> fibers_states;
+
   while (input.tryGetReadBuffer() != nullptr) {
     ::capnp::PackedMessageReader message(input);
     // ::capnp::InputStreamMessageReader message(input);
 
     auto batch = message.getRoot<replay::Batch>();
+    // dump_batch(&batch);
     auto threadsList = batch.getThreads();
     assert(threadsList.size() > 0);
 
@@ -262,16 +284,44 @@ int main(int argc, char **argv) {
     fibers.reserve(threadsList.size());
 
     for (auto threadInfo : threadsList) {
-      // printf("thread: %lld\n", (long long)threadInfo.getThreadID());
+      auto id = threadInfo.getThreadID();
+      // printf("thread: %lld\n", (long long)id);
       auto instructions = threadInfo.getInstructions();
       total_instructions += instructions.size();
-      fibers.emplace_back(new ReplayFiber([instructions] () {
-            replay_instructions(instructions);
-          }));
+
+      auto this_fiber = new ReplayFiber([instructions] () {
+          replay_instructions(instructions);
+        });
+
+      auto state_iter = fibers_states.find(id);
+      ThreadCacheState* malloc_state = nullptr;
+      if (state_iter == fibers_states.end()) {
+        // printf("new thread %lld\n", (long long)id);
+      } else {
+        malloc_state = state_iter->second;
+      }
+      this_fiber->malloc_state = malloc_state;
+
+      fibers.emplace_back(this_fiber);
     }
 
     for (auto &f : fibers) {
       f->Join();
+    }
+
+    for (int i = fibers.size() - 1; i >= 0; i--) {
+      auto threadInfo = threadsList[i];
+      auto id = threadInfo.getThreadID();
+      auto this_fiber = fibers[i].get();
+
+      assert(threadInfo.getInstructions().size() == 0 || this_fiber->malloc_state != nullptr);
+      if (threadInfo.getLive()) {
+        fibers_states[id] = this_fiber->malloc_state;
+        this_fiber->malloc_state = nullptr;
+      } else {
+        printf("thread %lld dying\n", (long long)id);
+        fibers_states.erase(id);
+      }
     }
 
     if (total_instructions - printed_instructions > (4 << 20)) {
@@ -282,8 +332,6 @@ int main(int argc, char **argv) {
              (double)total_instructions * 1E9 / total_nanos);
       printf("some ~last reg: %d\n", threadsList[0].getInstructions()[0].getReg());
     }
-
-    // printf("end of batch!\n\n\n");
   }
 
   printf("processed total %lld malloc ops (aka instructions)\n",

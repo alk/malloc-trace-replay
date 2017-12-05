@@ -12,11 +12,18 @@ ReplayDumper::ReplayDumper(const writer_fn_t& writer_fn) : writer_fn_(writer_fn)
   memset(first_segment.get(), 0, kFirstSegmentSize);
 }
 
+ReplayDumper::~ReplayDumper() {}
+
 ReplayDumper::ThreadState* ReplayDumper::find_thread(
-    uint64_t thread_id, bool *live_ptr) {
+    uint64_t thread_id) {
   auto pair = per_thread_instructions_.emplace(
-    thread_id, ThreadState(thread_id, live_ptr));
-  return &(pair.first->second);
+    thread_id, ThreadState(thread_id));
+  auto rv = &(pair.first->second);
+  if (!rv->used_in_this_chunk) {
+    rv->used_in_this_chunk = true;
+    threads_in_this_chunk.push_back(rv);
+  }
+  return rv;
 }
 
 constexpr int kIterationSize = 4096;
@@ -31,8 +38,10 @@ void ReplayDumper::after_record() {
 }
 
 void ReplayDumper::record_malloc(
-  ThreadState* state, uint64_t tok, uint64_t size,
+  uint64_t thread_id, uint64_t tok, uint64_t size,
   uint64_t timestamp) {
+
+  auto state = find_thread(thread_id);
 
   auto reg = ids_space_.allocate_id();
   allocated_[tok] = reg;
@@ -42,7 +51,9 @@ void ReplayDumper::record_malloc(
 }
 
 void ReplayDumper::record_free(
-  ThreadState* state, uint64_t tok, uint64_t timestamp) {
+  uint64_t thread_id, uint64_t tok, uint64_t timestamp) {
+
+  auto state = find_thread(thread_id);
 
   assert(allocated_.count(tok) == 1);
   auto reg = allocated_[tok];
@@ -57,8 +68,10 @@ void ReplayDumper::record_free(
 }
 
 void ReplayDumper::record_realloc(
-  ThreadState* state, uint64_t tok, uint64_t timestamp,
+  uint64_t thread_id, uint64_t tok, uint64_t timestamp,
   uint64_t new_tok, uint64_t new_size) {
+
+  auto state = find_thread(thread_id);
 
   assert(allocated_.count(tok) == 1);
   auto reg = allocated_[tok];
@@ -75,15 +88,10 @@ void ReplayDumper::record_realloc(
   after_record();
 }
 
-struct ChunkInfo {
-  uint64_t thread_count;
-};
-
-struct ThreadInfo {
-  uint64_t thread_id;
-  bool live;
-  uint32_t instructions_count;
-};
+void ReplayDumper::record_death(uint64_t thread_id) {
+  auto state = find_thread(thread_id);
+  state->live = false;
+}
 
 class FunctionOutputStream : public ::kj::OutputStream {
 public:
@@ -100,14 +108,16 @@ private:
 void ReplayDumper::flush_chunk() {
   ::capnp::MallocMessageBuilder message(kj::arrayPtr(reinterpret_cast<capnp::word*>(first_segment.get()), kFirstSegmentSize));
   replay::Batch::Builder batch = message.initRoot<replay::Batch>();
-  ::capnp::List<replay::ThreadChunk>::Builder threads = batch.initThreads(per_thread_instructions_.size());
+  ::capnp::List<replay::ThreadChunk>::Builder threads = batch.initThreads(threads_in_this_chunk.size());
 
   int idx = 0;
-  for (auto &pair : per_thread_instructions_) {
-    auto thread_id = pair.first;
-    auto &state = pair.second;
-    assert(state.thread_id == thread_id);
-    auto live = *(state.live_ptr);
+
+  for (auto &thread_ptr : threads_in_this_chunk) {
+    auto thread_id = thread_ptr->thread_id;
+    auto &state = *thread_ptr;
+    auto live = state.live;
+
+    assert(state.used_in_this_chunk);
 
     replay::ThreadChunk::Builder tinfo = threads[idx++];
 
@@ -126,6 +136,13 @@ void ReplayDumper::flush_chunk() {
         builder.setOldReg(instr.old_reg);
       }
     }
+
+    if (live) {
+      state.instructions.clear();
+      state.used_in_this_chunk = false;
+    } else {
+      per_thread_instructions_.erase(thread_id);
+    }
   }
 
   {
@@ -137,8 +154,7 @@ void ReplayDumper::flush_chunk() {
     ids_space_.free_id(reg);
   }
 
+  threads_in_this_chunk.clear();
   freed_this_iteration_.clear();
-  per_thread_instructions_.clear();
-  // std::fill(allocated_this_iteration.begin(), allocated_this_iteration.end(), false);
   iteration_size = 0;
 }

@@ -430,20 +430,21 @@ struct ReplayMachine {
     //   dump_heap_and_exit();
     // }
 
-    ReplayDumper::ThreadState* dst = dumper_.find_thread(ev.malloc.thread_id, &st->live);
-
     switch (ev.type) {
     case EventsEncoder::kEventMalloc:
-      dumper_.record_malloc(dst, ev.malloc.token, ev.malloc.size, ev.ts);
+      dumper_.record_malloc(ev.malloc.thread_id, ev.malloc.token, ev.malloc.size, ev.ts);
       break;
     case EventsEncoder::kEventFree:
-      dumper_.record_free(dst, ev.free.token, ev.ts);
+      dumper_.record_free(ev.free.thread_id, ev.free.token, ev.ts);
       break;
     case EventsEncoder::kEventMemalign:
-      dumper_.record_malloc(dst, ev.memalign.token, ev.memalign.size, ev.ts);
+      dumper_.record_malloc(ev.memalign.thread_id, ev.memalign.token, ev.memalign.size, ev.ts);
       break;
     case EventsEncoder::kEventRealloc:
-      dumper_.record_realloc(dst, ev.realloc.old_token, ev.ts, ev.realloc.new_token, ev.realloc.new_size);
+      dumper_.record_realloc(ev.realloc.thread_id, ev.realloc.old_token, ev.ts, ev.realloc.new_token, ev.realloc.new_size);
+      break;
+    case EventsEncoder::kEventDeath:
+      dumper_.record_death(ev.death.thread_id);
       break;
     }
   }
@@ -496,9 +497,8 @@ struct ReplayMachine {
         ThreadReplayState *t = &states[ev.death.thread_id];
         assert(t->live);
         t->live = false;
-        if (!t->has_next) {
-          live_threads_count--;
-        }
+        total_read++;
+        t->add_event(ev, total_read);
         continue;
       }
       if (!is_interesting_event(ev)) {
@@ -630,6 +630,8 @@ struct ReplayMachine {
       case EventsEncoder::kEventRealloc:
         process_free(ev.realloc.old_token);
         process_allocation(ev.realloc.new_token, ev);
+        break;
+      case EventsEncoder::kEventDeath:
         break;
       default:
         abort();
