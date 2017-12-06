@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <sched.h>
+#include <dlfcn.h>
 
 #include <atomic>
 #include <vector>
@@ -42,8 +43,8 @@ extern "C" {
   bool set_malloc_thread_cache(ThreadCacheState* state) __attribute__((weak));
 }
 
-static const auto release_malloc_thread_cache_ptr = release_malloc_thread_cache;
-static const auto set_malloc_thread_cache_ptr = set_malloc_thread_cache;
+static auto release_malloc_thread_cache_ptr = release_malloc_thread_cache;
+static auto set_malloc_thread_cache_ptr = set_malloc_thread_cache;
 
 static void maybe_release_malloc_thread_cache(ThreadCacheState** place_state_here) {
   if (release_malloc_thread_cache_ptr) {
@@ -248,6 +249,18 @@ static void mmap_registers() {
   registers = static_cast<void **>(mmap_result);
 }
 
+static void setup_malloc_state_fns() {
+  void *handle = dlopen(NULL, RTLD_LAZY);
+  if (!release_malloc_thread_cache_ptr) {
+    auto v = dlsym(handle, "release_malloc_thread_cache");
+    release_malloc_thread_cache_ptr = reinterpret_cast<bool (*)(ThreadCacheState**)>(v);
+  }
+  if (!set_malloc_thread_cache) {
+    auto v = dlsym(handle, "set_malloc_thread_cache");
+    set_malloc_thread_cache_ptr = reinterpret_cast<bool (*)(ThreadCacheState*)>(v);
+  }
+}
+
 static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
 
 extern "C" void dump_batch(::replay::Batch::Reader* reader) {
@@ -256,6 +269,7 @@ extern "C" void dump_batch(::replay::Batch::Reader* reader) {
 
 int main(int argc, char **argv) {
   mmap_registers();
+  setup_malloc_state_fns();
 
   int fd = 0;
 

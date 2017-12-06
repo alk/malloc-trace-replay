@@ -2,7 +2,7 @@ ACLOCAL_AMFLAGS = -I m4
 AUTOMAKE_OPTIONS = subdir-objects
 
 AM_CXXFLAGS = -pthread
-AM_LDFLAGS = -pthread
+AM_LDFLAGS = -ldl -pthread
 
 CAPNP = @CAPNP@
 LD_RUN_PATH = @LD_RUN_PATH@
