@@ -26,6 +26,56 @@
 #include "malloc_trace_encoder.h"
 #include "actual_replay.h"
 
+namespace events {
+  struct Malloc {
+    uint64_t thread_id;
+    uint64_t token;
+    uint64_t size;
+  };
+  struct Free {
+    uint64_t thread_id;
+    uint64_t token;
+  };
+  struct FreeSized {
+    uint64_t thread_id;
+    uint64_t token;
+    uint64_t size;
+  };
+  struct Realloc {
+    uint64_t thread_id;
+    uint64_t old_token;
+    uint64_t new_token;
+    uint64_t new_size;
+  };
+  struct Memalign {
+    uint64_t thread_id;
+    uint64_t token;
+    uint64_t size;
+    uint64_t alignment;
+  };
+  struct Tok {
+    uint64_t thread_id;
+    uint64_t ts;
+    uint64_t cpu;
+    uint64_t token_base;
+  };
+  struct Death {
+    uint64_t thread_id;
+    uint64_t ts;
+    uint64_t cpu;
+  };
+  struct Buf {
+    uint64_t thread_id;
+    uint64_t ts;
+    uint64_t cpu;
+    uint64_t size;
+  };
+  struct SyncAllEnd {
+    uint64_t ts;
+    uint64_t cpu;
+  };
+} // namespace events
+
 struct EventUnion {
   uint8_t type;
   bool new_thread;
@@ -35,6 +85,7 @@ struct EventUnion {
   union {
     events::Malloc malloc;
     events::Free free;
+    events::FreeSized free_sized;
     events::Realloc realloc;
     events::Memalign memalign;
     events::Tok tok;
@@ -58,6 +109,7 @@ struct EventUnion {
     case EventsEncoder::kEventBuf:
     case EventsEncoder::kEventDeath:
     case EventsEncoder::kEventEnd:
+    case EventsEncoder::kEventSyncAllEnd:
       printf("<misc>\n");
       break;
     case EventsEncoder::kEventRealloc:
