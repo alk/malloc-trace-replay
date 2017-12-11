@@ -219,6 +219,7 @@ struct EventsEncoder {
     b->size = third_word;
   }
 
+  // TODO: drop thread_id from this event encoding
   template <typename T>
   static void decode_token(T *t,
                            uint64_t first_word, uint64_t second_word, uint64_t third_word) {

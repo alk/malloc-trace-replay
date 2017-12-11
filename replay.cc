@@ -85,12 +85,12 @@ struct EventUnion {
   union {
     events::Malloc malloc;
     events::Free free;
-    events::FreeSized free_sized;
     events::Realloc realloc;
     events::Memalign memalign;
     events::Tok tok;
     events::Death death;
     events::Buf buf;
+    events::SyncAllEnd sync_all_end;
   };
 
   void print(void) const {
@@ -176,6 +176,39 @@ public:
   void consume_tok(events::Tok &t) {
     malloc_tok_seq = t.token_base;
   }
+};
+
+struct OuterEvent {
+  uint8_t type;
+  uint32_t cpu;
+  uint64_t ts;
+  uint64_t thread_id;
+  const char *buf_start;
+  const char *buf_end;
+};
+
+class EvStream {
+  EvStream(const char *begin, const char *end);
+  ~EvStream();
+
+  bool next(OuterEvent *ev);
+};
+
+class EventsReceiver {
+public:
+  virtual ~EventsReceiver() {}
+  virtual void KillCurrentThread() = 0;
+  virtual void SwitchThread(uint64_t thread_id) = 0;
+  virtual void SetTS(uint64_t ts, uint64_t cpu) = 0;
+  virtual void Malloc(uint64_t tok, uint64_t size) = 0;
+  virtual void Memalign(uint64_t tok, uint64_t size, uint64_t align) = 0;
+  virtual void Realloc(uint64_t old_tok, uint64_t size,
+                       uint64_t new_tok, uint64_t new_size) = 0;
+  virtual void Free(uint64_t tok) = 0;
+  virtual void FreeSized(uint64_t tok, uint64_t size) = 0;
+};
+
+class StreamSerializer {
 };
 
 class EventsStream {
@@ -271,9 +304,13 @@ public:
       break;
     }
     case EventsEncoder::kEventEnd:
-      rv.type = evtype;
       done = true;
       break;
+    case EventsEncoder::kEventSyncAllEnd: {
+      uint64_t second_word = read_varint();
+      EventsEncoder::decode_sync_all_all(&rv.sync_all_end, first_word, second_word);
+      break;
+    }
     default:
       printf("unknown type: %u\n", evtype);
       abort();
