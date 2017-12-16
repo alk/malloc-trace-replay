@@ -39,6 +39,12 @@ noinst_PROGRAMS += rr_fiber_test
 rr_fiber_test_SOURCES = rr_fiber_test.cc
 rr_fiber_test_LDADD = librr_fiber.a libsimple_fiber.a
 
+noinst_PROGRAMS += replay2
+
+replay2_SOURCES = replay2.cc events-serializer.h events-serializer.cc replay.capnp.c++ replay.capnp.h
+replay2_LDADD =  @capnp_LIBS@
+replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
+
 # prevent gnu make from creating implicit rule for replay.capnp from
 # replay.capnp.c++
 replay.capnp: ;
