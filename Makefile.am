@@ -41,7 +41,11 @@ rr_fiber_test_LDADD = librr_fiber.a libsimple_fiber.a
 
 noinst_PROGRAMS += replay2
 
-replay2_SOURCES = replay2.cc events-serializer.h events-serializer.cc replay.capnp.c++ replay.capnp.h
+replay2_SOURCES = replay2.cc \
+	events-serializer.h events-serializer.cc \
+	actual_replay.h actual_replay.cc \
+	varint_codec.cc varint_codec.h \
+	replay.capnp.c++ replay.capnp.h
 replay2_LDADD =  @capnp_LIBS@
 replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 

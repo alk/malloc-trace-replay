@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 #include <deque>
 #include <functional>
@@ -21,10 +22,68 @@
 #include <signal.h>
 
 #include "events-serializer.h"
+#include "actual_replay.h"
 
 static void pabort(const char *t) {
   perror(t);
   abort();
+}
+
+class ReplayReceiver : public EventsReceiver {
+public:
+  ReplayReceiver(ReplayDumper* dumper) : dumper_(dumper) {}
+  ~ReplayReceiver() {}
+
+  virtual void KillCurrentThread();
+  virtual void SwitchThread(uint64_t thread_id);
+  virtual void SetTS(uint64_t ts, uint64_t cpu);
+  virtual void Malloc(uint64_t tok, uint64_t size);
+  virtual void Memalign(uint64_t tok, uint64_t size, uint64_t align);
+  virtual void Realloc(uint64_t old_tok,
+                       uint64_t new_tok, uint64_t new_size);
+  virtual void Free(uint64_t tok);
+  virtual void FreeSized(uint64_t tok, uint64_t size);
+  virtual void Barrier();
+
+private:
+  ReplayDumper* dumper_;
+  uint64_t current_thread_{};
+};
+
+void ReplayReceiver::KillCurrentThread() {
+  dumper_->record_death(current_thread_);
+}
+
+void ReplayReceiver::SwitchThread(uint64_t thread_id) {
+  current_thread_ = thread_id;
+}
+
+void ReplayReceiver::SetTS(uint64_t ts, uint64_t cpu) {
+}
+
+void ReplayReceiver::Malloc(uint64_t tok, uint64_t size) {
+  dumper_->record_malloc(current_thread_, tok, size, 0);
+}
+
+void ReplayReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
+  dumper_->record_malloc(current_thread_, tok, size, 0);
+}
+
+void ReplayReceiver::Realloc(uint64_t old_tok,
+                             uint64_t new_tok, uint64_t new_size) {
+  dumper_->record_realloc(current_thread_, old_tok, 0, new_tok, new_size);
+}
+
+void ReplayReceiver::Free(uint64_t tok) {
+  dumper_->record_free(current_thread_, tok, 0);
+}
+
+void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
+  dumper_->record_free(current_thread_, tok, 0);
+}
+
+void ReplayReceiver::Barrier() {
+  dumper_->flush_chunk();
 }
 
 int main(int argc, char **argv) {
@@ -42,10 +101,30 @@ int main(int argc, char **argv) {
     pabort("fstat");
   }
 
-  auto mmap_result = mmap(nullptr, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+  auto pagesize = getpagesize();
+  auto mmap_size = ((st.st_size + pagesize - 1) & ~(pagesize - 1)) + pagesize;
+  auto mmap_result = mmap(nullptr, mmap_size,
+                          PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+  if (mmap_result == MAP_FAILED) {
+    pabort("mmap");
+  }
+  const char* mmap_area = static_cast<const char *>(mmap_result);
+  mmap_result = mmap(mmap_result, st.st_size,
+                     PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0);
   if (mmap_result == MAP_FAILED) {
     pabort("mmap");
   }
 
+  ReplayDumper::writer_fn_t writer = [] (const void *buf, size_t sz) -> int{
+    int rv = write(1, buf, sz);
+    if (rv != sz) {
+      pabort("write");
+    }
+    return 0;
+  };
 
+  ReplayDumper dumper(writer);
+  ReplayReceiver receiver(&dumper);
+
+  SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &receiver);
 }

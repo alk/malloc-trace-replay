@@ -2,6 +2,8 @@
 #ifndef EVENTS_SERIALIZER_H
 #define EVENTS_SERIALIZER_H
 
+#include <stdint.h>
+
 class EventsReceiver {
 public:
   virtual ~EventsReceiver();
@@ -14,6 +16,7 @@ public:
                        uint64_t new_tok, uint64_t new_size) = 0;
   virtual void Free(uint64_t tok) = 0;
   virtual void FreeSized(uint64_t tok, uint64_t size) = 0;
+  virtual void Barrier() = 0;
 };
 
 void SerializeMallocEvents(const char* begin, const char* end,

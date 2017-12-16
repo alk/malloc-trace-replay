@@ -62,7 +62,8 @@ struct EventsEncoder {
     return (ts & ~1023) | (cpu & 1023);
   }
 
-  static void unbundle_ts_and_cpu(uint64_t word, uint64_t *ts, uint64_t *cpu) {
+  template <typename I1, typename I2>
+  static void unbundle_ts_and_cpu(uint64_t word, I1 *ts, I2 *cpu) {
     *ts = word & ~1023;
     *cpu = word & 1023;
   }

@@ -71,7 +71,7 @@ namespace events {
 EventsReceiver::~EventsReceiver() {}
 
 static void panic(const char *reason) {
-  fputs(reason, stderr);
+  fprintf(stderr, "%s\n", reason);
   abort();
 }
 
@@ -94,7 +94,7 @@ protected:
   const char *ptr_;
 };
 
-uint64_t MemStream::advance_by(uint64_t amount) {
+void MemStream::advance_by(uint64_t amount) {
   uintptr_t old_ptr = reinterpret_cast<uintptr_t>(ptr_);
   uintptr_t new_ptr = old_ptr + amount;
   if (new_ptr < old_ptr) {
@@ -124,16 +124,12 @@ struct OuterEvent {
 };
 
 class OuterEvStream : public MemStream {
+public:
   OuterEvStream(const char *begin, const char *end)
-    : begin_(begin), end_(end), ptr_(begin) {}
+    : MemStream(begin, end) {}
   ~OuterEvStream() {}
 
   bool next(OuterEvent *ev);
-private:
-
-  const char *begin_;
-  const char *end_;
-  const char *ptr_;
 };
 
 struct BufEvent {
@@ -143,7 +139,7 @@ struct BufEvent {
   uint64_t size;
 };
 
-bool EvStream::next(OuterEvent *ev) {
+bool OuterEvStream::next(OuterEvent *ev) {
   if (!has_more()) {
     return false;
   }
@@ -165,11 +161,11 @@ bool EvStream::next(OuterEvent *ev) {
 
       BufEvent buf;
       EventsEncoder::decode_buffer(&buf, first_word, second_word, third_word);
-      ev->thread_id = buf->thread_id;
-      ev->ts = buf->ts;
-      ev->cpu = buf->cpu;
+      ev->thread_id = buf.thread_id;
+      ev->ts = buf.ts;
+      ev->cpu = buf.cpu;
       ev->buf_start = ptr_;
-      advance_by(buf->size);
+      advance_by(buf.size);
       ev->buf_end = ptr_;
       break;
     }
@@ -217,7 +213,7 @@ public:
 
   template <typename T>
   void consume_realloc(T *r, uint64_t first_word, uint64_t second_word) {
-    EventsEncoder::decode_realloc(t, first_word, second_word,
+    EventsEncoder::decode_realloc(r, first_word, second_word,
                                   &prev_size, &prev_token, &malloc_tok_seq);
   }
 
@@ -269,6 +265,7 @@ public:
   InnerEvent last_event;
   std::unique_ptr<MemStream> active_stream;
   std::deque<OuterEvent> bufs;
+  bool dead{};
 
   bool update_last_event_inner() {
     memset(&last_event, 0, sizeof(last_event));
@@ -280,28 +277,28 @@ public:
     unsigned evtype = EventsEncoder::decode_type(first_word);
     last_event.type = evtype;
     switch (evtype) {
-    case kEventMalloc:
+    case EventsEncoder::kEventMalloc:
       consume_malloc(&last_event.malloc, first_word);
       break;
-    case kEventFree:
+    case EventsEncoder::kEventFree:
       consume_free(&last_event.free, first_word);
       break;
-    case kEventTok: {
+    case EventsEncoder::kEventTok: {
       auto second_word = active_stream->must_read_varint();
       auto third_word = active_stream->must_read_varint();
       events::Tok tok;
       consume_tok(&tok, first_word, second_word, third_word);
       return update_last_event();
     }
-    case kEventRealloc:
+    case EventsEncoder::kEventRealloc:
       consume_realloc(&last_event.realloc,
                       first_word, active_stream->must_read_varint());
       break;
-    case kEventMemalign:
+    case EventsEncoder::kEventMemalign:
       consume_memalign(&last_event.memalign,
                       first_word, active_stream->must_read_varint());
       break;
-    case kEventFreeSized:
+    case EventsEncoder::kEventFreeSized:
       consume_free_sized(&last_event.free_sized,
                          first_word, active_stream->must_read_varint());
       break;
@@ -320,7 +317,7 @@ public:
       if (bufs.empty()) {
         return false;
       }
-      active_buf = *bufs.front();
+      active_buf = bufs.front();
       active_stream.reset(new MemStream(active_buf.buf_start, active_buf.buf_end));
     }
     return true;
@@ -328,7 +325,7 @@ public:
 };
 
 struct ThreadStateHash {
-  size_t operator ()(const FullThreadState& t) {
+  size_t operator ()(const FullThreadState& t) const noexcept {
     return std::hash<uint64_t>{}(t.thread_id);
   }
 };
@@ -372,7 +369,7 @@ struct SerializeState {
       recv_thread_id = thread_id;
     }
     if (last_ts != recv_ts) {
-      receiver->SetTS(last_ts);
+      receiver->SetTS(last_ts, 0);
       recv_ts = last_ts;
     }
   }
@@ -396,19 +393,19 @@ struct SerializeState {
       }
       it = threads.emplace(thread_id).first;
     }
-    return &*it;
+    return const_cast<FullThreadState*>(&*it);
   }
 
   std::pair<bool, uint64_t> is_event_ready(InnerEvent* ev) {
     switch (ev->type) {
-    case kEventMalloc:
-    case kEventMemalign:
+    case EventsEncoder::kEventMalloc:
+    case EventsEncoder::kEventMemalign:
       return {true, 0};
-    case kEventFree:
-      return {allocated.count(ev->free.tok) != 0, ev->free.tok};
-    case kEventFreeSized:
-      return {allocated.count(ev->free_sized.tok) != 0, ev->free_sized.tok};
-    case kEventRealloc:
+    case EventsEncoder::kEventFree:
+      return {allocated.count(ev->free.token) != 0, ev->free.token};
+    case EventsEncoder::kEventFreeSized:
+      return {allocated.count(ev->free_sized.token) != 0, ev->free_sized.token};
+    case EventsEncoder::kEventRealloc:
       return {allocated.count(ev->realloc.old_token) != 0, ev->realloc.old_token};
     default:
       panic("unknown event");
@@ -421,6 +418,9 @@ void SerializeMallocEvents(const char* begin, const char* end,
   OuterEvStream s(begin, end);
   SerializeState state;
 
+  auto& heap = state.heap;
+  auto &allocated = state.allocated;
+
   uint64_t recv_thread_id = ~uint64_t{0};
   uint64_t recv_ts = 0;
 
@@ -431,12 +431,13 @@ void SerializeMallocEvents(const char* begin, const char* end,
       if (!ok) {
         panic("unexpected stream end");
       }
-      if (ev.type == kEventEnd || ev.type = kEventSyncAllEnd) {
+      if (ev.type == EventsEncoder::kEventEnd
+          || ev.type == EventsEncoder::kEventSyncAllEnd) {
         break;
       }
       switch (ev.type) {
-      case kEventBuf: {
-        FullThreadState *thread = state.find_thread(ev.thread_id, false);
+      case EventsEncoder::kEventBuf: {
+        FullThreadState *thread = state.find_thread(ev.thread_id, true);
         assert(!thread->dead);
         bool was_empty = false;
         if (thread->bufs.empty()) {
@@ -454,7 +455,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
           }
         }
       }
-      case kEventDeath: {
+      case EventsEncoder::kEventDeath: {
         FullThreadState *thread = state.find_thread(ev.thread_id, false);
         assert(!thread->dead);
         thread->dead = true;
@@ -464,13 +465,11 @@ void SerializeMallocEvents(const char* begin, const char* end,
         panic("unknown type");
       }
     }
-    if (ev.type == kEventEnd) {
+    if (ev.type == EventsEncoder::kEventEnd) {
       return;
     }
 
-    auto &allocated = state.allocated;
-
-    while (!state.threads_heap.empty()) {
+    while (!heap.empty()) {
       FullThreadState* thread = heap.top();
       uint64_t last_ts = thread->last_ts;
       bool processed;
@@ -479,7 +478,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
       uint64_t wait_tok;
       InnerEvent *ev = &thread->last_event;
       switch (ev->type) {
-      case kEventMalloc:
+      case EventsEncoder::kEventMalloc:
         assert(allocated.count(ev->malloc.token) != 0);
         new_tok = ev->malloc.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
@@ -487,17 +486,16 @@ void SerializeMallocEvents(const char* begin, const char* end,
                          ev->malloc.size);
         processed = true;
         break;
-      case kEventMemalign:
+      case EventsEncoder::kEventMemalign:
         assert(allocated.count(ev->memalign.token) != 0);
         new_tok = ev->memalign.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
         receiver->Memalign(ev->memalign.token,
                            ev->memalign.size,
                            ev->memalign.alignment);
-        maybe_activate_pending(ev->memalign.token);
         processed = true;
         break;
-      case kEventFree:
+      case EventsEncoder::kEventFree:
         wait_tok = ev->free.token;
         if (allocated.count(wait_tok) != 0) {
           processed = true;
@@ -506,7 +504,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
           receiver->Free(wait_tok);
         }
         break;
-      case kEventFreeSized:
+      case EventsEncoder::kEventFreeSized:
         wait_tok = ev->free_sized.token;
         if (allocated.count(wait_tok) != 0) {
           processed = true;
@@ -515,8 +513,8 @@ void SerializeMallocEvents(const char* begin, const char* end,
           receiver->FreeSized(wait_tok, ev->free_sized.size);
         }
         break;
-      case kEventRealloc:
-        wait_tok = ev->realloc.old_token
+      case EventsEncoder::kEventRealloc:
+        wait_tok = ev->realloc.old_token;
         if (allocated.count(wait_tok) != 0) {
           processed = true;
           allocated.erase(wait_tok);
@@ -524,7 +522,6 @@ void SerializeMallocEvents(const char* begin, const char* end,
           state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
           receiver->Realloc(ev->realloc.old_token, ev->realloc.new_size,
                             ev->realloc.new_token);
-          new_token = ev->realloc.new_;
         }
         break;
       default:
@@ -543,7 +540,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
         }
       } else {
         heap.pop();
-        state.pending_frees.insert(wait_tok, thread);
+        state.pending_frees.insert({wait_tok, thread});
       }
 
       // now that we're not expecting thread to be at the top of heap,
@@ -555,13 +552,15 @@ void SerializeMallocEvents(const char* begin, const char* end,
 
     }
 
+    receiver->Barrier();
+
     assert(state.pending_frees.empty());
     assert(heap.empty());
 
     for (auto thread : state.to_die) {
       assert(thread->dead);
       assert(thread->bufs.empty());
-      threads.erase(*thread);
+      state.threads.erase(*thread);
     }
     state.to_die.clear();
   }
