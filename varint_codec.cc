@@ -36,7 +36,7 @@ char *VarintCodec::encode_varint_huge(char *place, uint64_t val, uint64_t high) 
   return place + 10;
 }
 
-VarintCodec::DecodeResult<uint64_t> VarintCodec::decode_huge_varint_slow(char *place, uint64_t val, unsigned p)
+VarintCodec::DecodeResult<uint64_t> VarintCodec::decode_huge_varint_slow(const char *place, uint64_t val, unsigned p)
 {
   DecodeResult<uint64_t> rv;
   rv.advance = p;

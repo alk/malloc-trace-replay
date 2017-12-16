@@ -63,15 +63,15 @@ public:
     return (val >> 1) ^ (0 - sign);
   }
 
-  static DecodeResult<uint64_t> decode_unsigned(char *place);
-  static DecodeResult<int64_t> decode_signed(char *place);
+  static DecodeResult<uint64_t> decode_unsigned(const char *place);
+  static DecodeResult<int64_t> decode_signed(const char *place);
 
   static __attribute__ ((visibility("internal")))  unsigned char encode_bits[64];
   static __attribute__ ((visibility("internal")))  uint64_t decode_masks[9];
 
 private:
   static char *encode_varint_huge(char *place, uint64_t val, uint64_t high);
-  static DecodeResult<uint64_t> decode_huge_varint_slow(char *place, uint64_t val, unsigned p);
+  static DecodeResult<uint64_t> decode_huge_varint_slow(const char *place, uint64_t val, unsigned p);
 };
 
 inline char *VarintCodec::encode_signed(char *place, int64_t val) {
