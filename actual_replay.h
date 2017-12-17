@@ -195,7 +195,6 @@ public:
 
     ThreadState(uint64_t thread_id)
       : thread_id(thread_id) {
-      instructions.reserve(512);
     }
   };
   typedef std::function<int (const void *, size_t)> writer_fn_t;

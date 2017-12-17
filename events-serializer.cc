@@ -288,7 +288,7 @@ public:
       auto third_word = active_stream->must_read_varint();
       events::Tok tok;
       consume_tok(&tok, first_word, second_word, third_word);
-      return update_last_event();
+      return update_last_event_inner();
     }
     case EventsEncoder::kEventRealloc:
       consume_realloc(&last_event.realloc,
@@ -314,6 +314,7 @@ public:
       update_with_buf(&active_buf);
 
       bufs.pop_front();
+      active_stream.reset();
       if (bufs.empty()) {
         return false;
       }
@@ -409,6 +410,7 @@ struct SerializeState {
       return {allocated.count(ev->realloc.old_token) != 0, ev->realloc.old_token};
     default:
       panic("unknown event");
+      __builtin_unreachable();
     }
   }
 };
@@ -454,12 +456,14 @@ void SerializeMallocEvents(const char* begin, const char* end,
             heap.push(thread);
           }
         }
+        break;
       }
       case EventsEncoder::kEventDeath: {
         FullThreadState *thread = state.find_thread(ev.thread_id, false);
         assert(!thread->dead);
         thread->dead = true;
         state.to_die.push_back(thread);
+        break;
       }
       default:
         panic("unknown type");
@@ -471,6 +475,8 @@ void SerializeMallocEvents(const char* begin, const char* end,
 
     while (!heap.empty()) {
       FullThreadState* thread = heap.top();
+      assert(thread->active_stream.get() != nullptr);
+      assert(!thread->bufs.empty());
       uint64_t last_ts = thread->last_ts;
       bool processed;
       constexpr uint64_t kEmptyTok = ~uint64_t{0};
@@ -479,7 +485,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
       InnerEvent *ev = &thread->last_event;
       switch (ev->type) {
       case EventsEncoder::kEventMalloc:
-        assert(allocated.count(ev->malloc.token) != 0);
+        assert(allocated.count(ev->malloc.token) == 0);
         new_tok = ev->malloc.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
         receiver->Malloc(ev->malloc.token,
@@ -487,7 +493,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
         processed = true;
         break;
       case EventsEncoder::kEventMemalign:
-        assert(allocated.count(ev->memalign.token) != 0);
+        assert(allocated.count(ev->memalign.token) == 0);
         new_tok = ev->memalign.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
         receiver->Memalign(ev->memalign.token,
@@ -520,8 +526,8 @@ void SerializeMallocEvents(const char* begin, const char* end,
           allocated.erase(wait_tok);
           new_tok = ev->realloc.new_token;
           state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
-          receiver->Realloc(ev->realloc.old_token, ev->realloc.new_size,
-                            ev->realloc.new_token);
+          receiver->Realloc(ev->realloc.old_token,
+                            ev->realloc.new_token, ev->realloc.new_size);
         }
         break;
       default:

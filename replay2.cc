@@ -29,6 +29,55 @@ static void pabort(const char *t) {
   abort();
 }
 
+class PrintReceiver : public EventsReceiver {
+public:
+  PrintReceiver(EventsReceiver* target) : target_(target) {}
+  ~PrintReceiver() {}
+
+  void KillCurrentThread() {
+    printf("KillCurrentThread\n");
+    target_->KillCurrentThread();
+  }
+  void SwitchThread(uint64_t thread_id) {
+    printf("SwitchThread(%zu)\n", (size_t)thread_id);
+    target_->SwitchThread(thread_id);
+  }
+  void SetTS(uint64_t ts, uint64_t cpu) {
+    printf("SetTS(%zu, %zu)\n", (size_t)ts, (size_t)cpu);
+    target_->SetTS(ts, cpu);
+  }
+  void Malloc(uint64_t tok, uint64_t size) {
+    printf("Malloc(%zu, %zu)\n", (size_t)tok, (size_t)size);
+    target_->Malloc(tok, size);
+  }
+  void Memalign(uint64_t tok, uint64_t size, uint64_t align) {
+    printf("Memalign(%zu, %zu, %zu)\n", (size_t)tok, (size_t)size, (size_t)align);
+    target_->Memalign(tok, size, align);
+  }
+  void Realloc(uint64_t old_tok,
+               uint64_t new_tok, uint64_t new_size) {
+    printf("Realloc(%zu, %zu, %zu)\n",
+           (size_t)old_tok, (size_t)new_tok, (size_t)new_size);
+    target_->Realloc(old_tok, new_tok, new_size);
+  }
+  void Free(uint64_t tok) {
+    printf("Free(%zu)\n", (size_t)tok);
+    target_->Free(tok);
+  }
+  void FreeSized(uint64_t tok, uint64_t size) {
+    printf("FreeSized(%zu, %zu)\n",
+           (size_t)tok, (size_t)size);
+    target_->FreeSized(tok, size);
+  }
+  void Barrier() {
+    printf("Barrier\n");
+    target_->Barrier();
+  }
+
+private:
+  EventsReceiver* const target_;
+};
+
 class ReplayReceiver : public EventsReceiver {
 public:
   ReplayReceiver(ReplayDumper* dumper) : dumper_(dumper) {}
@@ -88,11 +137,19 @@ void ReplayReceiver::Barrier() {
 
 int main(int argc, char **argv) {
   int fd = 0;
-  if (argc > 1) {
-    fd = open(argv[1], O_RDONLY);
-    if (fd < 0) {
-      pabort("open");
-    }
+  if (argc < 3) {
+    fprintf(stderr, "need 2 args\n");
+    return 0;
+  }
+
+  fd = open(argv[1], O_RDONLY);
+  if (fd < 0) {
+    pabort("open");
+  }
+
+  int fd2 = open(argv[2], O_WRONLY|O_CREAT|O_TRUNC);
+  if (fd2 < 0) {
+    pabort("open");
   }
 
   struct stat st;
@@ -115,8 +172,8 @@ int main(int argc, char **argv) {
     pabort("mmap");
   }
 
-  ReplayDumper::writer_fn_t writer = [] (const void *buf, size_t sz) -> int{
-    int rv = write(1, buf, sz);
+  ReplayDumper::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
+    int rv = write(fd2, buf, sz);
     if (rv != sz) {
       pabort("write");
     }
@@ -125,6 +182,12 @@ int main(int argc, char **argv) {
 
   ReplayDumper dumper(writer);
   ReplayReceiver receiver(&dumper);
+  PrintReceiver printer(&receiver);
 
+  signal(SIGINT, [](int dummy) {
+      exit(0);
+    });
+
+  // SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &printer);
   SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &receiver);
 }
