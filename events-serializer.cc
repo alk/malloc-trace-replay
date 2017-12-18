@@ -51,21 +51,6 @@ namespace events {
     uint64_t cpu;
     uint64_t token_base;
   };
-  // struct Death {
-  //   uint64_t thread_id;
-  //   uint64_t ts;
-  //   uint64_t cpu;
-  // };
-  // struct Buf {
-  //   uint64_t thread_id;
-  //   uint64_t ts;
-  //   uint64_t cpu;
-  //   uint64_t size;
-  // };
-  // struct SyncAllEnd {
-  //   uint64_t ts;
-  //   uint64_t cpu;
-  // };
 } // namespace events
 
 EventsReceiver::~EventsReceiver() {}
