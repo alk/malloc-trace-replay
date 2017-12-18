@@ -356,7 +356,6 @@ struct SerializeState {
 
   set_of_threads threads;
   threads_heap heap;
-  std::unordered_set<uint64_t> allocated;
   std::vector<FullThreadState*> to_die;
   std::unordered_map<uint64_t, FullThreadState*> pending_frees;
 
@@ -377,8 +376,6 @@ struct SerializeState {
   }
 
   void add_allocated(uint64_t tok) {
-    assert(allocated.count(tok) == 0);
-    allocated.insert(tok);
     auto it = pending_frees.find(tok);
     if (it == pending_frees.end()) {
       return;
@@ -405,7 +402,6 @@ void SerializeMallocEvents(const char* begin, const char* end,
   SerializeState state;
 
   auto& heap = state.heap;
-  auto &allocated = state.allocated;
 
   uint64_t recv_thread_id = ~uint64_t{0};
   uint64_t recv_ts = 0;
@@ -469,7 +465,6 @@ void SerializeMallocEvents(const char* begin, const char* end,
       InnerEvent *ev = &thread->last_event;
       switch (ev->type) {
       case EventsEncoder::kEventMalloc:
-        assert(allocated.count(ev->malloc.token) == 0);
         new_tok = ev->malloc.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
         receiver->Malloc(ev->malloc.token,
@@ -477,7 +472,6 @@ void SerializeMallocEvents(const char* begin, const char* end,
         processed = true;
         break;
       case EventsEncoder::kEventMemalign:
-        assert(allocated.count(ev->memalign.token) == 0);
         new_tok = ev->memalign.token;
         state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
         receiver->Memalign(ev->memalign.token,
@@ -487,27 +481,24 @@ void SerializeMallocEvents(const char* begin, const char* end,
         break;
       case EventsEncoder::kEventFree:
         wait_tok = ev->free.token;
-        if (allocated.count(wait_tok) != 0) {
+        if (receiver->HasAllocated(wait_tok)) {
           processed = true;
-          allocated.erase(wait_tok);
           state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
           receiver->Free(wait_tok);
         }
         break;
       case EventsEncoder::kEventFreeSized:
         wait_tok = ev->free_sized.token;
-        if (allocated.count(wait_tok) != 0) {
+        if (receiver->HasAllocated(wait_tok)) {
           processed = true;
-          allocated.erase(wait_tok);
           state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
           receiver->FreeSized(wait_tok, ev->free_sized.size);
         }
         break;
       case EventsEncoder::kEventRealloc:
         wait_tok = ev->realloc.old_token;
-        if (allocated.count(wait_tok) != 0) {
+        if (receiver->HasAllocated(wait_tok)) {
           processed = true;
-          allocated.erase(wait_tok);
           new_tok = ev->realloc.new_token;
           state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
           receiver->Realloc(ev->realloc.old_token,
@@ -543,9 +534,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
       if (new_tok != kEmptyTok) {
         state.add_allocated(new_tok);
       }
-
     }
-
 
     assert(state.pending_frees.empty());
     assert(heap.empty());

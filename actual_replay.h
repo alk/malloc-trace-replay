@@ -211,6 +211,10 @@ public:
 
   void record_death(uint64_t thread_id);
 
+  bool has_allocated(uint64_t tok) {
+    return allocated_.count(tok) != 0;
+  }
+
   void flush_chunk();
 
 private:

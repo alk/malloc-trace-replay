@@ -71,6 +71,9 @@ public:
     printf("Barrier\n");
     target_->Barrier();
   }
+  bool HasAllocated(uint64_t tok) {
+    return target_->HasAllocated(tok);
+  }
 
 private:
   EventsReceiver* const target_;
@@ -91,6 +94,7 @@ public:
   virtual void Free(uint64_t tok);
   virtual void FreeSized(uint64_t tok, uint64_t size);
   virtual void Barrier();
+  virtual bool HasAllocated(uint64_t tok);
 
 private:
   ReplayDumper* dumper_;
@@ -131,6 +135,10 @@ void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
 
 void ReplayReceiver::Barrier() {
   dumper_->flush_chunk();
+}
+
+bool ReplayReceiver::HasAllocated(uint64_t tok) {
+  dumper_->has_allocated(tok);
 }
 
 int main(int argc, char **argv) {

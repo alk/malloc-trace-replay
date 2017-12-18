@@ -17,6 +17,7 @@ public:
   virtual void Free(uint64_t tok) = 0;
   virtual void FreeSized(uint64_t tok, uint64_t size) = 0;
   virtual void Barrier() = 0;
+  virtual bool HasAllocated(uint64_t tok) = 0;
 };
 
 void SerializeMallocEvents(const char* begin, const char* end,
