@@ -16,11 +16,17 @@
 #include <queue>
 #include <vector>
 #include <time.h>
+#include <unordered_map>
 #include <sys/mman.h>
 #include <signal.h>
 
+#include <capnp/message.h>
+#include <capnp/orphan.h>
+#include <capnp/serialize-packed.h>
+
+#include "replay2.capnp.h"
 #include "events-serializer.h"
-#include "actual_replay.h"
+#include "id_tree.h"
 
 static void pabort(const char *t) {
   perror(t);
@@ -79,10 +85,15 @@ private:
   EventsReceiver* const target_;
 };
 
+using capnp::MallocMessageBuilder;
+using capnp::Orphan;
+
 class ReplayReceiver : public EventsReceiver {
 public:
-  ReplayReceiver(ReplayDumper* dumper) : dumper_(dumper) {}
-  ~ReplayReceiver() {}
+  typedef std::function<int (const void *, size_t)> writer_fn_t;
+
+  ReplayReceiver(const writer_fn_t& writer_fn) : writer_fn_(writer_fn) {}
+  ~ReplayReceiver() noexcept {}
 
   virtual void KillCurrentThread();
   virtual void SwitchThread(uint64_t thread_id);
@@ -97,15 +108,33 @@ public:
   virtual bool HasAllocated(uint64_t tok);
 
 private:
-  ReplayDumper* dumper_;
+  writer_fn_t writer_fn_;
+  IdTree ids_space_;
+  std::unordered_map<uint64_t, uint64_t> allocated_;
   uint64_t current_thread_{};
+
+  MallocMessageBuilder builder_;
+  std::vector<Orphan<replay::Instruction>> instructions_;
+
+  template <typename Body>
+  void appendInstr(const Body& body) {
+    auto instr = builder_.getOrphanage().newOrphan<replay::Instruction>();
+    body(instr.get());
+    instructions_.push_back(std::move(instr));
+  }
 };
 
 void ReplayReceiver::KillCurrentThread() {
-  dumper_->record_death(current_thread_);
+  appendInstr([] (replay::Instruction::Builder instr) {
+      instr.initKillThread();
+    });
 }
 
 void ReplayReceiver::SwitchThread(uint64_t thread_id) {
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto st = instr.initSwitchThread();
+      st.setThreadID(thread_id);
+    });
   current_thread_ = thread_id;
 }
 
@@ -113,32 +142,101 @@ void ReplayReceiver::SetTS(uint64_t ts, uint64_t cpu) {
 }
 
 void ReplayReceiver::Malloc(uint64_t tok, uint64_t size) {
-  dumper_->record_malloc(current_thread_, tok, size, 0);
+  auto reg = ids_space_.allocate_id();
+  allocated_[tok] = reg;
+
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto m = instr.initMalloc();
+      m.setReg(reg);
+      m.setSize(size);
+    });
 }
 
 void ReplayReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
-  dumper_->record_malloc(current_thread_, tok, size, 0);
+  auto reg = ids_space_.allocate_id();
+  allocated_[tok] = reg;
+
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto m = instr.initMemalign();
+      m.setReg(reg);
+      m.setSize(size);
+      m.setAlignment(align);
+    });
 }
 
 void ReplayReceiver::Realloc(uint64_t old_tok,
                              uint64_t new_tok, uint64_t new_size) {
-  dumper_->record_realloc(current_thread_, old_tok, 0, new_tok, new_size);
+  auto new_reg = ids_space_.allocate_id();
+  auto old_reg = allocated_[old_tok];
+  allocated_.erase(old_tok);
+  allocated_[new_tok] = new_reg;
+  ids_space_.free_id(old_reg);
+
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto m = instr.initRealloc();
+      m.setOldReg(old_reg);
+      m.setNewReg(new_reg);
+      m.setSize(new_size);
+    });
 }
 
 void ReplayReceiver::Free(uint64_t tok) {
-  dumper_->record_free(current_thread_, tok, 0);
+  auto old_reg = allocated_[tok];
+  allocated_.erase(tok);
+  ids_space_.free_id(old_reg);
+
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto m = instr.initFree();
+      m.setReg(old_reg);
+    });
 }
 
 void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
-  dumper_->record_free(current_thread_, tok, 0);
+  auto old_reg = allocated_[tok];
+  allocated_.erase(tok);
+  ids_space_.free_id(old_reg);
+
+  appendInstr([&] (replay::Instruction::Builder instr) {
+      auto m = instr.initFreeSized();
+      m.setReg(old_reg);
+      m.setSize(size);
+    });
 }
 
+class FunctionOutputStream : public ::kj::OutputStream {
+public:
+  FunctionOutputStream(const ReplayReceiver::writer_fn_t& writer) : writer_(writer) {}
+  ~FunctionOutputStream() = default;
+
+  virtual void write(const void* buffer, size_t size) {
+    writer_(buffer, size);
+  }
+private:
+  const ReplayReceiver::writer_fn_t &writer_;
+};
+
 void ReplayReceiver::Barrier() {
-  dumper_->flush_chunk();
+  MallocMessageBuilder message{};
+  replay::Batch::Builder batch = message.initRoot<replay::Batch>();
+  auto size = instructions_.size();
+  capnp::List<replay::Instruction>::Builder inst_list = batch.initInstructions(size);
+  for (int i = 0; i < size; i++) {
+    const auto& instr = instructions_[i];
+    inst_list.setWithCaveats(i, instr.getReader());
+  }
+  instructions_.clear();
+
+  builder_.~MallocMessageBuilder();
+  new (&builder_) MallocMessageBuilder();
+
+  {
+    FunctionOutputStream os(writer_fn_);
+    ::capnp::writePackedMessage(os, message);
+  }
 }
 
 bool ReplayReceiver::HasAllocated(uint64_t tok) {
-  dumper_->has_allocated(tok);
+  return allocated_.count(tok) != 0;
 }
 
 int main(int argc, char **argv) {
@@ -178,7 +276,7 @@ int main(int argc, char **argv) {
     pabort("mmap");
   }
 
-  ReplayDumper::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
+  ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
     int rv = write(fd2, buf, sz);
     if (rv != sz) {
       pabort("write");
@@ -186,8 +284,7 @@ int main(int argc, char **argv) {
     return 0;
   };
 
-  ReplayDumper dumper(writer);
-  ReplayReceiver receiver(&dumper);
+  ReplayReceiver receiver(writer);
   PrintReceiver printer(&receiver);
 
   signal(SIGINT, [](int dummy) {

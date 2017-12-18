@@ -29,6 +29,9 @@ test_dump_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 replay.capnp.c++ replay.capnp.h : replay.capnp
 	$(CAPNP) compile -oc++ replay.capnp
 
+replay2.capnp.c++ replay2.capnp.h : replay2.capnp
+	$(CAPNP) compile -oc++ replay2.capnp
+
 noinst_PROGRAMS += fiber_test
 
 fiber_test_SOURCES = fiber_test.cc
@@ -43,15 +46,17 @@ noinst_PROGRAMS += replay2
 
 replay2_SOURCES = replay2.cc \
 	events-serializer.h events-serializer.cc \
-	actual_replay.h actual_replay.cc \
+	id_tree.h \
 	varint_codec.cc varint_codec.h \
-	replay.capnp.c++ replay.capnp.h
+	replay2.capnp.c++ replay2.capnp.h
 replay2_LDADD =  @capnp_LIBS@
 replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 
 # prevent gnu make from creating implicit rule for replay.capnp from
 # replay.capnp.c++
 replay.capnp: ;
+
+replay2.capnp: ;
 
 @GENERATE_CHANGELOG_RULES@
 

@@ -6,7 +6,7 @@
 
 class EventsReceiver {
 public:
-  virtual ~EventsReceiver();
+  virtual ~EventsReceiver() noexcept;
   virtual void KillCurrentThread() = 0;
   virtual void SwitchThread(uint64_t thread_id) = 0;
   virtual void SetTS(uint64_t ts, uint64_t cpu) = 0;
