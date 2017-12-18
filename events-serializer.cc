@@ -266,6 +266,7 @@ public:
   std::unique_ptr<MemStream> active_stream;
   std::deque<OuterEvent> bufs;
   bool dead{};
+  bool signalled{};
 
   bool update_last_event_inner() {
     memset(&last_event, 0, sizeof(last_event));
@@ -539,6 +540,10 @@ void SerializeMallocEvents(const char* begin, const char* end,
       if (processed) {
         bool ok = thread->update_last_event();
         if (!ok) {
+          if (thread->dead) {
+            receiver->KillCurrentThread();
+            thread->signalled = true;
+          }
           heap.pop();
         } else if (thread->last_ts != last_ts) {
           heap.pop();
@@ -558,7 +563,6 @@ void SerializeMallocEvents(const char* begin, const char* end,
 
     }
 
-    receiver->Barrier();
 
     assert(state.pending_frees.empty());
     assert(heap.empty());
@@ -566,8 +570,14 @@ void SerializeMallocEvents(const char* begin, const char* end,
     for (auto thread : state.to_die) {
       assert(thread->dead);
       assert(thread->bufs.empty());
+      if (!thread->signalled) {
+        receiver->SwitchThread(thread->thread_id);
+        receiver->KillCurrentThread();
+      }
       state.threads.erase(*thread);
     }
     state.to_die.clear();
+
+    receiver->Barrier();
   }
 }

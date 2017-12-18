@@ -14,8 +14,6 @@
 #include <functional>
 #include <memory>
 #include <queue>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <time.h>
 #include <sys/mman.h>
@@ -147,7 +145,7 @@ int main(int argc, char **argv) {
     pabort("open");
   }
 
-  int fd2 = open(argv[2], O_WRONLY|O_CREAT|O_TRUNC);
+  int fd2 = open(argv[2], O_WRONLY|O_CREAT|O_TRUNC, 0666);
   if (fd2 < 0) {
     pabort("open");
   }
