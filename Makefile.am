@@ -8,7 +8,7 @@ CAPNP = @CAPNP@
 LD_RUN_PATH = @LD_RUN_PATH@
 export LD_RUN_PATH
 
-noinst_PROGRAMS = replay test_dump
+noinst_PROGRAMS = replay test_dump test_dump2
 
 replay_SOURCES = replay.cc varint_codec.cc \
 	actual_replay.h actual_replay.cc \
@@ -25,6 +25,10 @@ librr_fiber_a_SOURCES = rr-fiber.cc rr-fiber.h
 test_dump_SOURCES = test_dump.cc replay.capnp.c++ replay.capnp.h
 test_dump_LDADD =  @capnp_LIBS@ librr_fiber.a libsimple_fiber.a
 test_dump_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
+
+test_dump2_SOURCES = test_dump2.cc replay2.capnp.c++ replay2.capnp.h
+test_dump2_LDADD =  @capnp_LIBS@
+test_dump2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 
 replay.capnp.c++ replay.capnp.h : replay.capnp
 	$(CAPNP) compile -oc++ replay.capnp

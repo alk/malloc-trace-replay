@@ -92,7 +92,7 @@ class ReplayReceiver : public EventsReceiver {
 public:
   typedef std::function<int (const void *, size_t)> writer_fn_t;
 
-  ReplayReceiver(const writer_fn_t& writer_fn) : writer_fn_(writer_fn) {}
+  ReplayReceiver(const writer_fn_t& writer_fn);
   ~ReplayReceiver() noexcept {}
 
   virtual void KillCurrentThread();
@@ -108,6 +108,23 @@ public:
   virtual bool HasAllocated(uint64_t tok);
 
 private:
+  template <typename Body>
+  void appendInstr(const Body& body) {
+    auto instr = builder_.getOrphanage().newOrphan<replay::Instruction>();
+    body(instr.get());
+    instructions_.push_back(std::move(instr));
+  }
+
+  static constexpr int kFirstSegmentSize = 10 << 20;
+
+  void reset_instructions() {
+    instructions_.clear();
+    builder_.~MallocMessageBuilder();
+    auto seg_ptr = reinterpret_cast<capnp::word*>(builder_first_segment_.get());
+    auto fs = kj::arrayPtr(seg_ptr, kFirstSegmentSize);
+    new (&builder_) MallocMessageBuilder(fs);
+  }
+
   writer_fn_t writer_fn_;
   IdTree ids_space_;
   std::unordered_map<uint64_t, uint64_t> allocated_;
@@ -115,14 +132,17 @@ private:
 
   MallocMessageBuilder builder_;
   std::vector<Orphan<replay::Instruction>> instructions_;
-
-  template <typename Body>
-  void appendInstr(const Body& body) {
-    auto instr = builder_.getOrphanage().newOrphan<replay::Instruction>();
-    body(instr.get());
-    instructions_.push_back(std::move(instr));
-  }
+  std::unique_ptr<uint64_t[]> first_segment_;
+  std::unique_ptr<uint64_t[]> builder_first_segment_;
 };
+
+ReplayReceiver::ReplayReceiver(const writer_fn_t& writer_fn) : writer_fn_(writer_fn) {
+  first_segment_.reset(new uint64_t[(kFirstSegmentSize + 7)/8]);
+  memset(first_segment_.get(), 0, kFirstSegmentSize);
+
+  builder_first_segment_.reset(new uint64_t[(kFirstSegmentSize + 7)/8]);
+  memset(builder_first_segment_.get(), 0, kFirstSegmentSize);
+}
 
 void ReplayReceiver::KillCurrentThread() {
   appendInstr([] (replay::Instruction::Builder instr) {
@@ -216,7 +236,10 @@ private:
 };
 
 void ReplayReceiver::Barrier() {
-  MallocMessageBuilder message{};
+  auto seg_ptr = reinterpret_cast<capnp::word*>(first_segment_.get());
+  auto fs = kj::arrayPtr(seg_ptr, kFirstSegmentSize);
+  MallocMessageBuilder message{fs};
+
   replay::Batch::Builder batch = message.initRoot<replay::Batch>();
   auto size = instructions_.size();
   capnp::List<replay::Instruction>::Builder inst_list = batch.initInstructions(size);
@@ -224,10 +247,8 @@ void ReplayReceiver::Barrier() {
     const auto& instr = instructions_[i];
     inst_list.setWithCaveats(i, instr.getReader());
   }
-  instructions_.clear();
 
-  builder_.~MallocMessageBuilder();
-  new (&builder_) MallocMessageBuilder();
+  reset_instructions();
 
   {
     FunctionOutputStream os(writer_fn_);
