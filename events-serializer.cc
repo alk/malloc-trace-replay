@@ -397,23 +397,6 @@ struct SerializeState {
     }
     return const_cast<FullThreadState*>(&*it);
   }
-
-  std::pair<bool, uint64_t> is_event_ready(InnerEvent* ev) {
-    switch (ev->type) {
-    case EventsEncoder::kEventMalloc:
-    case EventsEncoder::kEventMemalign:
-      return {true, 0};
-    case EventsEncoder::kEventFree:
-      return {allocated.count(ev->free.token) != 0, ev->free.token};
-    case EventsEncoder::kEventFreeSized:
-      return {allocated.count(ev->free_sized.token) != 0, ev->free_sized.token};
-    case EventsEncoder::kEventRealloc:
-      return {allocated.count(ev->realloc.old_token) != 0, ev->realloc.old_token};
-    default:
-      panic("unknown event");
-      __builtin_unreachable();
-    }
-  }
 };
 
 void SerializeMallocEvents(const char* begin, const char* end,
