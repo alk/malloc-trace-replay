@@ -344,7 +344,8 @@ struct SerializeState {
   std::vector<FullThreadState*> to_die;
   std::unordered_map<uint64_t, FullThreadState*> pending_frees;
 
-  uint64_t recv_thread_id = ~uint64_t{0};
+  static constexpr uint64_t kInvalidThreadID = ~uint64_t{0};
+  uint64_t recv_thread_id = kInvalidThreadID;
   uint64_t recv_ts = 0;
 
   void maybe_switch_thread(EventsReceiver *receiver,
@@ -530,6 +531,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
       if (!thread->signalled) {
         receiver->SwitchThread(thread->thread_id);
         receiver->KillCurrentThread();
+        state.recv_thread_id = SerializeState::kInvalidThreadID;
       }
       state.threads.erase(*thread);
     }

@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sched.h>
 #include <dlfcn.h>
+#include <signal.h>
 
 #include <atomic>
 #include <vector>
@@ -78,6 +79,7 @@ extern "C" {
 #define malloc(a) ((a), (reinterpret_cast<void *>(&some_location[0])))
 #define free(a) do {(void)(a);} while (0)
 #define realloc(a, b) malloc(b)
+#define memalign(a, b) malloc(b)
 
 #endif
 
@@ -118,6 +120,7 @@ static void handle_kill_thread() {
 }
 
 static void replay_instruction(const replay::Instruction::Reader& instruction) {
+  // printf("%s\n", capnp::prettyPrint(instruction).flatten().cStr());
   switch (instruction.which()) {
   case replay::Instruction::Which::MALLOC: {
     auto m = instruction.getMalloc();
@@ -223,6 +226,22 @@ extern "C" void dump_batch(::replay::Batch::Reader* reader) {
   printf("%s\n", capnp::prettyPrint(*reader).flatten().cStr());
 }
 
+static int roughly_last_reg(const capnp::List<replay::Instruction>::Reader& instructions) {
+  size_t i = instructions.size() - 1;
+  for (; i >= 0; i--) {
+    auto instr = instructions[i];
+    switch (instr.which()) {
+    case replay::Instruction::Which::MALLOC:
+      return instr.getMalloc().getReg();
+    case replay::Instruction::Which::MEMALIGN:
+      return instr.getMemalign().getReg();
+    case replay::Instruction::Which::FREE:
+      return instr.getFree().getReg();
+    }
+  }
+  return -1;
+}
+
 int main(int argc, char **argv) {
   mmap_registers();
   setup_malloc_state_fns();
@@ -236,6 +255,10 @@ int main(int argc, char **argv) {
       abort();
     }
   }
+
+  signal(SIGINT, [](int dummy) {
+      exit(0);
+    });
 
   printf("will%s use set/release_malloc_thread_cache\n",
          set_malloc_thread_cache_ptr ? "" : " not");
@@ -258,10 +281,6 @@ int main(int argc, char **argv) {
     auto batch = message.getRoot<replay::Batch>();
     // dump_batch(&batch);
     auto instructions = batch.getInstructions();
-    if (instructions.size() == 0) {
-      puts("0 size instructions!\n");
-    }
-    // assert(instructions.size() > 0);
 
     for (auto instr : instructions) {
       total_instructions++;
@@ -271,16 +290,16 @@ int main(int argc, char **argv) {
     if (total_instructions - printed_instructions > (4 << 20)) {
       uint64_t total_nanos = nanos() - nanos_start;
       printed_instructions = total_instructions;
-      printf("total_instructions = %lld\nrate = %f ops/sec\n",
+      printf("\rtotal_instructions = %lld; rate = %f ops/sec; live threads: %d, ~last reg: %d         \b\b\b\b\b\b\b\b\b",
              (long long)total_instructions,
-             (double)total_instructions * 1E9 / total_nanos);
-      // printf("some ~last reg: %d, live threads: %d\n",
-      //        threadsList[0].getInstructions()[0].getReg(),
-      //        (int)fibers_states.size());
+             (double)total_instructions * 1E9 / total_nanos,
+             (int)thread_states.size(),
+             roughly_last_reg(instructions));
+      fflush(stdout);
     }
   }
 
-  printf("processed total %lld malloc ops (aka instructions)\n",
+  printf("\nprocessed total %lld malloc ops (aka instructions)\n",
          (long long) total_instructions);
 
   return 0;

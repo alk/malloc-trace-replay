@@ -122,8 +122,9 @@ private:
     instructions_.clear();
     builder_.~MallocMessageBuilder();
 
+    builder_first_segment_ = kj::heapArray<capnp::word>(kFirstSegmentWordsCount);
     auto fs = builder_first_segment_.asPtr();
-    memset(fs.begin(), 0, fs.size());
+    memset(fs.begin(), 0, fs.size() * sizeof(capnp::word));
     new (&builder_) MallocMessageBuilder(fs);
   }
 
@@ -241,8 +242,9 @@ void ReplayReceiver::Barrier() {
     return;
   }
 
-  auto fs = first_segment_.asPtr();
-  memset(fs.begin(), 0, fs.size());
+  auto seg = kj::heapArray<capnp::word>(kFirstSegmentWordsCount);
+  auto fs = seg.asPtr();
+  memset(fs.begin(), 0, fs.size() * sizeof(capnp::word));
   MallocMessageBuilder message{fs};
 
   replay::Batch::Builder batch = message.initRoot<replay::Batch>();
