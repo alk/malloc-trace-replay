@@ -259,6 +259,7 @@ void ReplayReceiver::Barrier() {
   {
     FunctionOutputStream os(writer_fn_);
     ::capnp::writePackedMessage(os, message);
+    // capnp::writeMessage(os, message);
   }
 }
 
