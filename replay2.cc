@@ -20,6 +20,7 @@
 #include <sys/mman.h>
 #include <signal.h>
 
+#include <kj/array.h>
 #include <capnp/message.h>
 #include <capnp/orphan.h>
 #include <capnp/serialize-packed.h>
@@ -115,13 +116,14 @@ private:
     instructions_.push_back(std::move(instr));
   }
 
-  static constexpr int kFirstSegmentSize = 10 << 20;
+  static constexpr int kFirstSegmentWordsCount = 1 << 20;
 
   void reset_instructions() {
     instructions_.clear();
     builder_.~MallocMessageBuilder();
-    auto seg_ptr = reinterpret_cast<capnp::word*>(builder_first_segment_.get());
-    auto fs = kj::arrayPtr(seg_ptr, kFirstSegmentSize);
+
+    auto fs = builder_first_segment_.asPtr();
+    memset(fs.begin(), 0, fs.size());
     new (&builder_) MallocMessageBuilder(fs);
   }
 
@@ -132,16 +134,14 @@ private:
 
   MallocMessageBuilder builder_;
   std::vector<Orphan<replay::Instruction>> instructions_;
-  std::unique_ptr<uint64_t[]> first_segment_;
-  std::unique_ptr<uint64_t[]> builder_first_segment_;
+  kj::Array<capnp::word> first_segment_;
+  kj::Array<capnp::word> builder_first_segment_;
 };
 
-ReplayReceiver::ReplayReceiver(const writer_fn_t& writer_fn) : writer_fn_(writer_fn) {
-  first_segment_.reset(new uint64_t[(kFirstSegmentSize + 7)/8]);
-  memset(first_segment_.get(), 0, kFirstSegmentSize);
-
-  builder_first_segment_.reset(new uint64_t[(kFirstSegmentSize + 7)/8]);
-  memset(builder_first_segment_.get(), 0, kFirstSegmentSize);
+ReplayReceiver::ReplayReceiver(const writer_fn_t& writer_fn)
+    : writer_fn_(writer_fn),
+      first_segment_(kj::heapArray<capnp::word>(kFirstSegmentWordsCount)),
+      builder_first_segment_(kj::heapArray<capnp::word>(kFirstSegmentWordsCount)) {
 }
 
 void ReplayReceiver::KillCurrentThread() {
@@ -236,12 +236,16 @@ private:
 };
 
 void ReplayReceiver::Barrier() {
-  auto seg_ptr = reinterpret_cast<capnp::word*>(first_segment_.get());
-  auto fs = kj::arrayPtr(seg_ptr, kFirstSegmentSize);
+  auto size = instructions_.size();
+  if (size == 0) {
+    return;
+  }
+
+  auto fs = first_segment_.asPtr();
+  memset(fs.begin(), 0, fs.size());
   MallocMessageBuilder message{fs};
 
   replay::Batch::Builder batch = message.initRoot<replay::Batch>();
-  auto size = instructions_.size();
   capnp::List<replay::Instruction>::Builder inst_list = batch.initInstructions(size);
   for (int i = 0; i < size; i++) {
     const auto& instr = instructions_[i];

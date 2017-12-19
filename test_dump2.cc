@@ -66,13 +66,6 @@ extern "C" void dump_malloc_stats() {
 }
 
 
-static void delete_malloc_state(ThreadCacheState* malloc_state) {
-  ThreadCacheState *old{};
-  release_malloc_thread_cache(&old);
-  set_malloc_thread_cache(malloc_state);
-  set_malloc_thread_cache(old);
-}
-
 static constexpr int kMaxRegisters = 1 << 30;
 static void** registers;
 
@@ -87,6 +80,42 @@ extern "C" {
 #define realloc(a, b) malloc(b)
 
 #endif
+
+static std::unordered_map<uint64_t, ThreadCacheState*> thread_states;
+static constexpr uint64_t kInvalidThreadId = static_cast<uint64_t>(int64_t{-1});
+static uint64_t current_thread_id = kInvalidThreadId;
+
+static void delete_malloc_state(ThreadCacheState* malloc_state) {
+  ThreadCacheState *old{};
+  release_malloc_thread_cache(&old);
+  set_malloc_thread_cache(malloc_state);
+  set_malloc_thread_cache(old);
+}
+
+static void handle_switch_thread(uint64_t thread_id) {
+  assert(current_thread_id != thread_id);
+  assert(thread_id != kInvalidThreadId);
+
+  ThreadCacheState* ts;
+  release_malloc_thread_cache(&ts);
+  thread_states[current_thread_id] = ts;
+
+  current_thread_id = thread_id;
+  ts = thread_states[current_thread_id];
+  if (ts != nullptr) {
+    set_malloc_thread_cache(ts);
+  }
+}
+
+static void handle_kill_thread() {
+  assert(current_thread_id != kInvalidThreadId);
+  ThreadCacheState* ts = thread_states[current_thread_id];
+  thread_states.erase(current_thread_id);
+  if (ts != nullptr) {
+    delete_malloc_state(ts);
+  }
+  current_thread_id = kInvalidThreadId;
+}
 
 static void replay_instruction(const replay::Instruction::Reader& instruction) {
   switch (instruction.which()) {
@@ -134,10 +163,13 @@ static void replay_instruction(const replay::Instruction::Reader& instruction) {
     break;
   }
   case replay::Instruction::Which::KILL_THREAD:
-    break; //TODO
-  case replay::Instruction::Which::SWITCH_THREAD:
-    // TODO
+    handle_kill_thread();
     break;
+  case replay::Instruction::Which::SWITCH_THREAD: {
+    auto s = instruction.getSwitchThread();
+    handle_switch_thread(s.getThreadID());
+    break;
+  }
   default:
     abort();
   }
