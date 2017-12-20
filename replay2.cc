@@ -118,12 +118,28 @@ private:
   static constexpr size_t kMinBucketSize = 16 << 10;
   static_assert((kMinBucketSize & (kMinBucketSize - 1)) == 0, "kMinBucketSize is power of 2");
 
+  static constexpr size_t kBucketsAmount = size_t{64} << 30;
+  static set_type::bucket_type* AllocateBuckets() {
+    auto mmap_result = mmap(nullptr, kBucketsAmount,
+                            PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, 0, 0);
+    if (mmap_result == MAP_FAILED) {
+      pabort("mmap");
+    }
+    return new (mmap_result) set_type::bucket_type[kMinBucketSize];
+  }
+  struct DeallocateBuckets {
+    void operator ()(set_type::bucket_type* ptr) {
+      munmap(ptr, kBucketsAmount);
+    }
+  };
+
   size_t buckets_size_{kMinBucketSize};
-  std::unique_ptr<set_type::bucket_type[]> buckets_;
+  const std::unique_ptr<set_type::bucket_type, DeallocateBuckets> buckets_;
   set_type set_;
 };
 
-AllocatedMap::AllocatedMap() : buckets_(new set_type::bucket_type[kMinBucketSize]),
+AllocatedMap::AllocatedMap() : buckets_(AllocateBuckets()),
                                set_(set_type::bucket_traits(buckets_.get(), kMinBucketSize)) {
 }
 
@@ -143,10 +159,9 @@ void AllocatedMap::Erase(AllocatedMap::Element* e) {
 void AllocatedMap::Insert(uint64_t token, uint64_t reg) {
   assert(Lookup(token) == nullptr);
   if (set_.size() > buckets_size_ * 3 / 4) {
+    new (buckets_.get() + buckets_size_) set_type::bucket_type[buckets_size_];
     buckets_size_ *= 2;
-    decltype(buckets_) new_buckets{new set_type::bucket_type[buckets_size_]};
-    set_.rehash(set_type::bucket_traits(new_buckets.get(), buckets_size_));
-    buckets_.swap(new_buckets);
+    set_.rehash(set_type::bucket_traits(buckets_.get(), buckets_size_));
   }
   auto e = new Element;
   e->token = token;
