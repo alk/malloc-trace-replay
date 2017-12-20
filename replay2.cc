@@ -17,6 +17,7 @@
 #include <vector>
 #include <time.h>
 #include <unordered_map>
+#include <utility>
 #include <sys/mman.h>
 #include <signal.h>
 
@@ -88,6 +89,31 @@ private:
 
 using capnp::MallocMessageBuilder;
 using capnp::Orphan;
+using capnp::AnyPointer;
+
+typedef void (*set_instr_ptr)(replay::Instruction::Builder* instr,
+                              Orphan<AnyPointer>&& v);
+
+template <typename T>
+struct SetInstr { };
+
+#define I(K) \
+template <> struct SetInstr<replay::K> {                                \
+  static void setInstr(replay::Instruction::Builder* instr,             \
+                       Orphan<AnyPointer>&& v) {                        \
+    instr->adopt##K(v.releaseAs<replay::K>());                          \
+  }                                                                     \
+};
+
+I(Malloc)
+I(Free)
+I(Memalign)
+I(Realloc)
+I(FreeSized)
+I(KillThread)
+I(SwitchThread)
+
+#undef I
 
 class ReplayReceiver : public EventsReceiver {
 public:
@@ -109,54 +135,49 @@ public:
   virtual bool HasAllocated(uint64_t tok);
 
 private:
-  template <typename Body>
-  void appendInstr(const Body& body) {
-    auto instr = builder_.getOrphanage().newOrphan<replay::Instruction>();
-    body(instr.get());
-    instructions_.push_back(std::move(instr));
-  }
 
-  static constexpr int kFirstSegmentWordsCount = 1 << 20;
+  template <typename T>
+  capnp::BuilderFor<T> appendInstr() {
+    Orphan<AnyPointer> instr = builder_.getOrphanage().newOrphan<T>();
+    auto builder = instr.getAs<T>();
+    auto ptr = &SetInstr<T>::setInstr;
+    instructions_.emplace_back(std::make_pair(ptr, std::move(instr)));
+    return builder;
+  }
 
   void reset_instructions() {
     instructions_.clear();
     builder_.~MallocMessageBuilder();
-
-    builder_first_segment_ = kj::heapArray<capnp::word>(kFirstSegmentWordsCount);
-    auto fs = builder_first_segment_.asPtr();
-    memset(fs.begin(), 0, fs.size() * sizeof(capnp::word));
-    new (&builder_) MallocMessageBuilder(fs);
+    new (&builder_) MallocMessageBuilder(first_segment_.asPtr());
+    builder_.initRoot<replay::Batch>();
   }
 
   writer_fn_t writer_fn_;
   IdTree ids_space_;
   std::unordered_map<uint64_t, uint64_t> allocated_;
-  uint64_t current_thread_{};
 
-  MallocMessageBuilder builder_;
-  std::vector<Orphan<replay::Instruction>> instructions_;
   kj::Array<capnp::word> first_segment_;
-  kj::Array<capnp::word> builder_first_segment_;
+  MallocMessageBuilder builder_;
+  std::vector<std::pair<set_instr_ptr, Orphan<AnyPointer>>> instructions_;
 };
+
+static constexpr int kFirstSegmentWordsCount = 1 << 20;
 
 ReplayReceiver::ReplayReceiver(const writer_fn_t& writer_fn)
     : writer_fn_(writer_fn),
       first_segment_(kj::heapArray<capnp::word>(kFirstSegmentWordsCount)),
-      builder_first_segment_(kj::heapArray<capnp::word>(kFirstSegmentWordsCount)) {
+      builder_(first_segment_.asPtr()) {
+
+  builder_.initRoot<replay::Batch>();
 }
 
 void ReplayReceiver::KillCurrentThread() {
-  appendInstr([] (replay::Instruction::Builder instr) {
-      instr.initKillThread();
-    });
+  appendInstr<replay::KillThread>();
 }
 
 void ReplayReceiver::SwitchThread(uint64_t thread_id) {
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto st = instr.initSwitchThread();
-      st.setThreadID(thread_id);
-    });
-  current_thread_ = thread_id;
+  auto instr = appendInstr<replay::SwitchThread>();
+  instr.setThreadID(thread_id);
 }
 
 void ReplayReceiver::SetTS(uint64_t ts, uint64_t cpu) {
@@ -166,23 +187,19 @@ void ReplayReceiver::Malloc(uint64_t tok, uint64_t size) {
   auto reg = ids_space_.allocate_id();
   allocated_[tok] = reg;
 
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto m = instr.initMalloc();
-      m.setReg(reg);
-      m.setSize(size);
-    });
+  auto m = appendInstr<replay::Malloc>();
+  m.setReg(reg);
+  m.setSize(size);
 }
 
 void ReplayReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
   auto reg = ids_space_.allocate_id();
   allocated_[tok] = reg;
 
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto m = instr.initMemalign();
-      m.setReg(reg);
-      m.setSize(size);
-      m.setAlignment(align);
-    });
+  auto m = appendInstr<replay::Memalign>();
+  m.setReg(reg);
+  m.setSize(size);
+  m.setAlignment(align);
 }
 
 void ReplayReceiver::Realloc(uint64_t old_tok,
@@ -193,12 +210,10 @@ void ReplayReceiver::Realloc(uint64_t old_tok,
   allocated_[new_tok] = new_reg;
   ids_space_.free_id(old_reg);
 
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto m = instr.initRealloc();
-      m.setOldReg(old_reg);
-      m.setNewReg(new_reg);
-      m.setSize(new_size);
-    });
+  auto r = appendInstr<replay::Realloc>();
+  r.setOldReg(old_reg);
+  r.setNewReg(new_reg);
+  r.setSize(new_size);
 }
 
 void ReplayReceiver::Free(uint64_t tok) {
@@ -206,10 +221,8 @@ void ReplayReceiver::Free(uint64_t tok) {
   allocated_.erase(tok);
   ids_space_.free_id(old_reg);
 
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto m = instr.initFree();
-      m.setReg(old_reg);
-    });
+  auto f = appendInstr<replay::Free>();
+  f.setReg(old_reg);
 }
 
 void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
@@ -217,11 +230,9 @@ void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
   allocated_.erase(tok);
   ids_space_.free_id(old_reg);
 
-  appendInstr([&] (replay::Instruction::Builder instr) {
-      auto m = instr.initFreeSized();
-      m.setReg(old_reg);
-      m.setSize(size);
-    });
+  auto f = appendInstr<replay::FreeSized>();
+  f.setReg(old_reg);
+  f.setSize(size);
 }
 
 class FunctionOutputStream : public ::kj::OutputStream {
@@ -242,25 +253,21 @@ void ReplayReceiver::Barrier() {
     return;
   }
 
-  auto seg = kj::heapArray<capnp::word>(kFirstSegmentWordsCount);
-  auto fs = seg.asPtr();
-  memset(fs.begin(), 0, fs.size() * sizeof(capnp::word));
-  MallocMessageBuilder message{fs};
-
-  replay::Batch::Builder batch = message.initRoot<replay::Batch>();
+  replay::Batch::Builder batch = builder_.getRoot<replay::Batch>();
   capnp::List<replay::Instruction>::Builder inst_list = batch.initInstructions(size);
   for (int i = 0; i < size; i++) {
-    const auto& instr = instructions_[i];
-    inst_list.setWithCaveats(i, instr.getReader());
+    auto &p = instructions_[i];
+    auto builder = inst_list[i];
+    p.first(&builder, std::move(p.second));
   }
-
-  reset_instructions();
 
   {
     FunctionOutputStream os(writer_fn_);
-    ::capnp::writePackedMessage(os, message);
-    // capnp::writeMessage(os, message);
+    ::capnp::writePackedMessage(os, builder_);
+    // capnp::writeMessage(os, builder_);
   }
+
+  reset_instructions();
 }
 
 bool ReplayReceiver::HasAllocated(uint64_t tok) {
@@ -302,6 +309,15 @@ int main(int argc, char **argv) {
                      PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0);
   if (mmap_result == MAP_FAILED) {
     pabort("mmap");
+  }
+
+  rv = madvise(mmap_result, st.st_size, MADV_SEQUENTIAL);
+  if (rv < 0) {
+    pabort("madvise");
+  }
+  rv = posix_fadvise(fd2, 0, st.st_size, POSIX_FADV_SEQUENTIAL);
+  if (rv < 0) {
+    pabort("posix_fadvise");
   }
 
   ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
