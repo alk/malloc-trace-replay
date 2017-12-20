@@ -70,7 +70,6 @@ extern "C" void dump_malloc_stats() {
 static constexpr int kMaxRegisters = 1 << 30;
 static void** registers;
 
-#define NOOP_MALLOC
 #ifdef NOOP_MALLOC
 
 extern "C" {

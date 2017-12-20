@@ -16,7 +16,6 @@
 #include <queue>
 #include <vector>
 #include <time.h>
-#include <unordered_map>
 #include <utility>
 #include <sys/mman.h>
 #include <signal.h>
@@ -91,23 +90,31 @@ private:
 
 using namespace boost::intrusive;
 
-struct TokenHasher {
-  size_t operator()(uint64_t x) const {
-    // return x * UINT64_C(0x924924924924925); // yes, it's prime!
-    return x;
-  }
-};
-
 class AllocatedMap {
 public:
   struct Element : public boost::intrusive::unordered_set_base_hook<> {
     uint64_t token;
     uint64_t reg;
   };
-  struct ElemenKeyOp {
-    typedef uint64_t type;
-    const type& operator()(const Element& v) const {
-      return v.token;
+  struct TokenHasher {
+    size_t operator()(uint64_t x) const {
+      // return x * UINT64_C(0x924924924924925); // yes, it's prime!
+      return x;
+    }
+  };
+  struct ElementHasher {
+    size_t operator()(const Element& x) const {
+      return TokenHasher{}(x.token);
+    }
+  };
+  struct TokenEq {
+    bool operator()(uint64_t token, const Element& b) {
+      return token == b.token;
+    }
+  };
+  struct ElementEq {
+    bool operator()(const Element& a, const Element& b) {
+      return a.token == b.token;
     }
   };
 
@@ -119,9 +126,9 @@ public:
 
 private:
   typedef unordered_multiset<Element,
-                             key_of_value<ElemenKeyOp>,
+                             // key_of_value<ElemenKeyOp>,
                              power_2_buckets<true>,
-                             hash<TokenHasher>> set_type;
+                             hash<ElementHasher>, equal<ElementEq>> set_type;
 
   static constexpr size_t kMinBucketSize = 16 << 10;
   static_assert((kMinBucketSize & (kMinBucketSize - 1)) == 0, "kMinBucketSize is power of 2");
@@ -152,7 +159,7 @@ AllocatedMap::AllocatedMap() : buckets_(AllocateBuckets()),
 }
 
 AllocatedMap::Element* AllocatedMap::Lookup(uint64_t token) {
-  auto it = set_.find(token);
+  auto it = set_.find(token, TokenHasher{}, TokenEq{});
   if (it == set_.end()) {
     return nullptr;
   }
