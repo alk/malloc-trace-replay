@@ -91,6 +91,13 @@ private:
 
 using namespace boost::intrusive;
 
+struct TokenHasher {
+  size_t operator()(uint64_t x) const {
+    // return x * UINT64_C(0x924924924924925); // yes, it's prime!
+    return x;
+  }
+};
+
 class AllocatedMap {
 public:
   struct Element : public boost::intrusive::unordered_set_base_hook<> {
@@ -111,9 +118,10 @@ public:
   void Insert(uint64_t token, uint64_t reg);
 
 private:
-  typedef unordered_set<Element,
-                        key_of_value<ElemenKeyOp>,
-                        power_2_buckets<true>> set_type;
+  typedef unordered_multiset<Element,
+                             key_of_value<ElemenKeyOp>,
+                             power_2_buckets<true>,
+                             hash<TokenHasher>> set_type;
 
   static constexpr size_t kMinBucketSize = 16 << 10;
   static_assert((kMinBucketSize & (kMinBucketSize - 1)) == 0, "kMinBucketSize is power of 2");
@@ -158,7 +166,7 @@ void AllocatedMap::Erase(AllocatedMap::Element* e) {
 
 void AllocatedMap::Insert(uint64_t token, uint64_t reg) {
   assert(Lookup(token) == nullptr);
-  if (set_.size() > buckets_size_ * 3 / 4) {
+  if (set_.size() > buckets_size_ / 2) {
     new (buckets_.get() + buckets_size_) set_type::bucket_type[buckets_size_];
     buckets_size_ *= 2;
     set_.rehash(set_type::bucket_traits(buckets_.get(), buckets_size_));
