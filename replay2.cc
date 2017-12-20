@@ -21,6 +21,8 @@
 #include <sys/mman.h>
 #include <signal.h>
 
+#include <boost/intrusive/unordered_set.hpp>
+
 #include <kj/array.h>
 #include <capnp/message.h>
 #include <capnp/orphan.h>
@@ -86,6 +88,71 @@ public:
 private:
   EventsReceiver* const target_;
 };
+
+using namespace boost::intrusive;
+
+class AllocatedMap {
+public:
+  struct Element : public boost::intrusive::unordered_set_base_hook<> {
+    uint64_t token;
+    uint64_t reg;
+  };
+  struct ElemenKeyOp {
+    typedef uint64_t type;
+    const type& operator()(const Element& v) const {
+      return v.token;
+    }
+  };
+
+  AllocatedMap();
+
+  Element* Lookup(uint64_t token);
+  void Erase(Element *e);
+  void Insert(uint64_t token, uint64_t reg);
+
+private:
+  typedef unordered_set<Element,
+                        key_of_value<ElemenKeyOp>,
+                        power_2_buckets<true>> set_type;
+
+  static constexpr size_t kMinBucketSize = 16 << 10;
+  static_assert((kMinBucketSize & (kMinBucketSize - 1)) == 0, "kMinBucketSize is power of 2");
+
+  size_t buckets_size_{kMinBucketSize};
+  std::unique_ptr<set_type::bucket_type[]> buckets_;
+  set_type set_;
+};
+
+AllocatedMap::AllocatedMap() : buckets_(new set_type::bucket_type[kMinBucketSize]),
+                               set_(set_type::bucket_traits(buckets_.get(), kMinBucketSize)) {
+}
+
+AllocatedMap::Element* AllocatedMap::Lookup(uint64_t token) {
+  auto it = set_.find(token);
+  if (it == set_.end()) {
+    return nullptr;
+  }
+  return &*it;
+}
+
+void AllocatedMap::Erase(AllocatedMap::Element* e) {
+  set_.erase(set_.iterator_to(*e));
+  delete e;
+}
+
+void AllocatedMap::Insert(uint64_t token, uint64_t reg) {
+  assert(Lookup(token) == nullptr);
+  if (set_.size() > buckets_size_ * 3 / 4) {
+    buckets_size_ *= 2;
+    decltype(buckets_) new_buckets{new set_type::bucket_type[buckets_size_]};
+    set_.rehash(set_type::bucket_traits(new_buckets.get(), buckets_size_));
+    buckets_.swap(new_buckets);
+  }
+  auto e = new Element;
+  e->token = token;
+  e->reg = reg;
+  set_.insert(*e);
+}
 
 using capnp::MallocMessageBuilder;
 using capnp::Orphan;
@@ -154,7 +221,7 @@ private:
 
   writer_fn_t writer_fn_;
   IdTree ids_space_;
-  std::unordered_map<uint64_t, uint64_t> allocated_;
+  AllocatedMap allocated_;
 
   kj::Array<capnp::word> first_segment_;
   MallocMessageBuilder builder_;
@@ -185,7 +252,7 @@ void ReplayReceiver::SetTS(uint64_t ts, uint64_t cpu) {
 
 void ReplayReceiver::Malloc(uint64_t tok, uint64_t size) {
   auto reg = ids_space_.allocate_id();
-  allocated_[tok] = reg;
+  allocated_.Insert(tok, reg);
 
   auto m = appendInstr<replay::Malloc>();
   m.setReg(reg);
@@ -194,7 +261,7 @@ void ReplayReceiver::Malloc(uint64_t tok, uint64_t size) {
 
 void ReplayReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
   auto reg = ids_space_.allocate_id();
-  allocated_[tok] = reg;
+  allocated_.Insert(tok, reg);
 
   auto m = appendInstr<replay::Memalign>();
   m.setReg(reg);
@@ -204,10 +271,11 @@ void ReplayReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
 
 void ReplayReceiver::Realloc(uint64_t old_tok,
                              uint64_t new_tok, uint64_t new_size) {
+  auto* e = allocated_.Lookup(old_tok);
   auto new_reg = ids_space_.allocate_id();
-  auto old_reg = allocated_[old_tok];
-  allocated_.erase(old_tok);
-  allocated_[new_tok] = new_reg;
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
+  allocated_.Insert(new_tok, new_reg);
   ids_space_.free_id(old_reg);
 
   auto r = appendInstr<replay::Realloc>();
@@ -217,8 +285,9 @@ void ReplayReceiver::Realloc(uint64_t old_tok,
 }
 
 void ReplayReceiver::Free(uint64_t tok) {
-  auto old_reg = allocated_[tok];
-  allocated_.erase(tok);
+  auto* e = allocated_.Lookup(tok);
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
   ids_space_.free_id(old_reg);
 
   auto f = appendInstr<replay::Free>();
@@ -226,8 +295,9 @@ void ReplayReceiver::Free(uint64_t tok) {
 }
 
 void ReplayReceiver::FreeSized(uint64_t tok, uint64_t size) {
-  auto old_reg = allocated_[tok];
-  allocated_.erase(tok);
+  auto* e = allocated_.Lookup(tok);
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
   ids_space_.free_id(old_reg);
 
   auto f = appendInstr<replay::FreeSized>();
@@ -263,7 +333,7 @@ void ReplayReceiver::Barrier() {
 
   {
     FunctionOutputStream os(writer_fn_);
-    ::capnp::writePackedMessage(os, builder_);
+    capnp::writePackedMessage(os, builder_);
     // capnp::writeMessage(os, builder_);
   }
 
@@ -271,7 +341,7 @@ void ReplayReceiver::Barrier() {
 }
 
 bool ReplayReceiver::HasAllocated(uint64_t tok) {
-  return allocated_.count(tok) != 0;
+  return allocated_.Lookup(tok) != nullptr;
 }
 
 int main(int argc, char **argv) {
