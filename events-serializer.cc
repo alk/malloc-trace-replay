@@ -210,18 +210,11 @@ public:
 
   template <typename T>
   void consume_tok(T *ev, uint64_t first_word,
-                   uint64_t second_word, uint64_t third_word) {
-    struct Inter {
-      uint64_t thread_id;
-      uint64_t cpu;
-      uint64_t ts;
-      uint64_t token_base;
-    };
-    Inter i;
-    EventsEncoder::decode_token(&i, first_word, second_word, third_word);
-    ev->cpu = last_cpu = i.cpu;
-    ev->ts = last_ts = i.ts;
-    ev->token_base = malloc_tok_seq = i.token_base;
+                   uint64_t second_word) {
+    EventsEncoder::decode_token(ev, first_word, second_word);
+    last_cpu = ev->cpu;
+    last_ts = ev->ts;
+    malloc_tok_seq = ev->token_base;
   }
 
   void update_with_buf(OuterEvent *ev) {
@@ -271,9 +264,8 @@ public:
       break;
     case EventsEncoder::kEventTok: {
       auto second_word = active_stream->must_read_varint();
-      auto third_word = active_stream->must_read_varint();
       events::Tok tok;
-      consume_tok(&tok, first_word, second_word, third_word);
+      consume_tok(&tok, first_word, second_word);
       return update_last_event_inner();
     }
     case EventsEncoder::kEventRealloc:
