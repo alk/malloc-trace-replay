@@ -256,6 +256,12 @@ int main(int argc, char **argv) {
     }
   }
 
+  // if our input is pipe from some decompressor, larger pipe buffer
+  // is good idea
+#ifdef F_SETPIPE_SZ
+  fcntl(fd, F_SETPIPE_SZ, 1 << 20);
+#endif
+
   signal(SIGINT, [](int dummy) {
       exit(0);
     });
