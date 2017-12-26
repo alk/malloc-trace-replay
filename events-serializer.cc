@@ -24,6 +24,9 @@
 #include "varint_codec.h"
 #include "malloc_trace_encoder.h"
 
+typedef tcmalloc::VarintCodec VarintCodec;
+typedef tcmalloc::EventsEncoder EventsEncoder;
+
 namespace events {
   struct Malloc {
     uint64_t token;
