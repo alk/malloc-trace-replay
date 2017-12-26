@@ -156,9 +156,9 @@ bool OuterEvStream::next(OuterEvent *ev) {
     }
     case EventsEncoder::kEventEnd:
       break;
-    case EventsEncoder::kEventSyncAllEnd: {
+    case EventsEncoder::kEventSyncBarrier: {
       uint64_t second_word = must_read_varint();
-      EventsEncoder::decode_sync_all_all(ev, first_word, second_word);
+      EventsEncoder::decode_sync_barrier(ev, first_word, second_word);
       break;
     }
   default:
@@ -400,7 +400,7 @@ void SerializeMallocEvents(const char* begin, const char* end,
         panic("unexpected stream end");
       }
       if (ev.type == EventsEncoder::kEventEnd
-          || ev.type == EventsEncoder::kEventSyncAllEnd) {
+          || ev.type == EventsEncoder::kEventSyncBarrier) {
         break;
       }
       switch (ev.type) {
