@@ -32,7 +32,7 @@ module Events
     def_custom_attrs :thread_id, :tok, :size, :align
   end
   class Tok
-    def_custom_attrs :thread_id, :ts, :cpu, :token_base
+    def_custom_attrs :token_base, :ts, :cpu
   end
   class Death
     def_custom_attrs :thread_id, :ts, :cpu
@@ -42,7 +42,7 @@ module Events
   end
   class End
   end
-  class SyncAllEnd
+  class SyncBarrier
     def_custom_attrs :ts, :cpu
   end
 end
@@ -137,10 +137,9 @@ class EventsStream
       Events::Memalign.new(@thread_id, tok, sz, align)
     end
 
-    def consume_tok(thread_id, ts, cpu, new_base)
-      raise [thread_id, ts, cpu, new_base].inspect unless thread_id == @thread_id
+    def consume_tok(new_base, ts, cpu)
       @malloc_tok_seq = new_base
-      Events::Tok.new(@thread_id, ts, cpu, new_base)
+      Events::Tok.new(new_base, ts, cpu)
     end
   end
 
@@ -185,10 +184,9 @@ class EventsStream
     when 1 #Free
       return @curr_thread.consume_free(first)
     when 2 # Tok
-      thread_id = first_hi
+      token_base = first_hi
       ts, cpu = *read_ts_and_cpu()
-      last = read_varint()
-      return @thread_states[thread_id].consume_tok(thread_id, ts, cpu, last)
+      return @curr_thread.consume_tok(token_base, ts, cpu)
     when 3 # Buf
       raise unless @io = @main_io
       thread_id = first_hi
@@ -219,9 +217,9 @@ class EventsStream
       return @curr_thread.consume_realloc(first, read_varint())
     when 037 # Memalign
       return @curr_thread.consume_memalign(first, read_varint())
-    when 047 # SyncAllEnd
+    when 047 # SyncBarrier
       ts, cpu = *read_ts_and_cpu()
-      return Events::SyncAllEnd.new(ts, cpu)
+      return Events::SyncBarrier.new(ts, cpu)
     else
       raise "bad code: #{first}"
     end
