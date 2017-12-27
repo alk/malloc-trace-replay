@@ -21,11 +21,16 @@ noinst_PROGRAMS += replay2
 
 replay2_SOURCES = replay2.cc \
 	events-serializer.h events-serializer.cc \
-	id_tree.h \
-	varint_codec.cc varint_codec.h \
-	replay2.capnp.c++ replay2.capnp.h
+	id_tree.h malloc_trace_encoder.h \
+	varint_codec.cc varint_codec.h
+nodist_replay2_SOURCES = replay2.capnp.c++ replay2.capnp.h
 replay2_LDADD =  @capnp_LIBS@
 replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
+
+dist_noinst_DATA = replay2.capnp
+
+MOSTLYCLEANFILES = replay2.capnp.c++ replay2.capnp.h
+BUILT_SOURCES = replay2.capnp.h
 
 # prevent gnu make from creating implicit rule for replay.capnp from
 # replay2.capnp.c++
