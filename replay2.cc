@@ -391,6 +391,12 @@ int main(int argc, char **argv) {
     pabort("open");
   }
 
+  // if our output is pipe to some decompressor, larger pipe buffer is
+  // good idea
+#ifdef F_SETPIPE_SZ
+  fcntl(fd2, F_SETPIPE_SZ, 1 << 20);
+#endif
+
   struct stat st;
   int rv = fstat(fd, &st);
   if (rv < 0) {
