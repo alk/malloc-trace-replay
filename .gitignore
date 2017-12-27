@@ -15,6 +15,8 @@
 /config.sub
 /debian/changelog
 /replay2
+/replay2.capnp.c++
+/replay2.capnp.h
 /test-driver
 /test_dump2
 Makefile
