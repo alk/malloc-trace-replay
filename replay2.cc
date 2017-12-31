@@ -260,9 +260,16 @@ private:
 
 static constexpr int kFirstSegmentWordsCount = 1 << 20;
 
+template <typename T>
+kj::Array<T> mkZeroedArray(size_t size) {
+  auto rv = kj::heapArray<T>(size);
+  memset(rv.begin(), 0, rv.size() * sizeof(T));
+  return rv;
+}
+
 ReplayReceiver::ReplayReceiver(const writer_fn_t& writer_fn)
     : writer_fn_(writer_fn),
-      first_segment_(kj::heapArray<capnp::word>(kFirstSegmentWordsCount)),
+      first_segment_(mkZeroedArray<capnp::word>(kFirstSegmentWordsCount)),
       builder_(first_segment_.asPtr()) {
 
   builder_.initRoot<replay::Batch>();
@@ -374,27 +381,7 @@ bool ReplayReceiver::HasAllocated(uint64_t tok) {
   return allocated_.Lookup(tok) != nullptr;
 }
 
-class SimpleMapper : public Mapper {
-public:
-  SimpleMapper(int fd);
-  ~SimpleMapper() {}
-  const char* GetStart() {
-    return mmap_area_;
-  }
-  size_t Realize(const char* start, size_t len) {
-    const char* end = start + len;
-    if (end > mmap_area_ + size_) {
-      end = mmap_area_ + size_;
-    }
-    return end - start;
-  }
-private:
-  const int fd_;
-  const char* mmap_area_;
-  off_t size_;
-};
-
-SimpleMapper::SimpleMapper(int fd) : fd_(fd) {
+ConstMapper mmap_mapper(int fd) {
   struct stat st;
   int rv = fstat(fd, &st);
   if (rv < 0) {
@@ -408,7 +395,7 @@ SimpleMapper::SimpleMapper(int fd) : fd_(fd) {
   if (mmap_result == MAP_FAILED) {
     pabort("mmap");
   }
-  mmap_area_ = static_cast<const char *>(mmap_result);
+  const char* mmap_area = static_cast<const char *>(mmap_result);
   mmap_result = mmap(mmap_result, st.st_size,
                      PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0);
   if (mmap_result == MAP_FAILED) {
@@ -419,7 +406,7 @@ SimpleMapper::SimpleMapper(int fd) : fd_(fd) {
   if (rv < 0) {
     pabort("madvise");
   }
-  size_ = st.st_size;
+  return ConstMapper(mmap_area, st.st_size);
 }
 
 int main(int argc, char **argv) {
@@ -464,7 +451,7 @@ int main(int argc, char **argv) {
       exit(0);
     });
 
-  // SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &printer);
-  SimpleMapper m(fd);
+  ConstMapper m{mmap_mapper(fd)};
+  // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
 }

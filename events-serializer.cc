@@ -25,6 +25,7 @@
 #include "malloc_trace_encoder.h"
 
 Mapper::~Mapper() {}
+ConstMapper::~ConstMapper() {}
 
 typedef tcmalloc::VarintCodec VarintCodec;
 typedef tcmalloc::EventsEncoder EventsEncoder;
@@ -67,42 +68,107 @@ static void panic(const char *reason) {
 
 class MemStream {
 public:
-  MemStream(const char *begin, const char *end)
-    : begin_(begin), end_(end), ptr_(begin) {}
-  ~MemStream() {}
+  explicit MemStream(Mapper* mapper);
+  virtual ~MemStream() {}
 
   inline uint64_t must_read_varint();
-  inline void advance_by(uint64_t amount);
-
+  inline const char* advance_by(uint64_t amount);
   bool has_more() {
+    if (ptr_ < end_) {
+      return true;
+    }
+    realize_more(0);
     return ptr_ < end_;
   }
 
-protected:
-  const char *const begin_;
-  const char *const end_;
-  const char *ptr_;
-};
+private:
+  const uint64_t kRealizeSize = 1 << 20;
+  const size_t kMaxVarintSize = 10;
 
-void MemStream::advance_by(uint64_t amount) {
-  uintptr_t old_ptr = reinterpret_cast<uintptr_t>(ptr_);
-  uintptr_t new_ptr = old_ptr + amount;
-  if (new_ptr < old_ptr) {
-    abort();
+  bool has_at_least_varint() {
+    return ptr_ + kMaxVarintSize <= end_;
   }
 
-  ptr_ += amount;
-  if (ptr_ > end_) {
-    abort();
+  void realize_more(uint64_t min_amount);
+  uint64_t read_varint_slow();
+
+  const char *ptr_;
+  const char *end_;
+  const char *realized_start_;
+  const char *const begin_;
+  Mapper* const mapper_;
+};
+
+MemStream::MemStream(Mapper* mapper) : begin_(mapper->GetBegin()), mapper_(mapper) {
+  realized_start_ = end_ = ptr_ = begin_;
+}
+
+void MemStream::realize_more(uint64_t min_amount) {
+  size_t realize_amount = ptr_ - realized_start_ + std::max(min_amount, kRealizeSize);
+  size_t got_amount = mapper_->Realize(realized_start_, realize_amount);
+
+  end_ = realized_start_ + got_amount;
+  if (uint64_t(end_ - ptr_) < min_amount) {
+    panic("trying to realize with min_amount beyond end of data");
   }
 }
 
-uint64_t MemStream::must_read_varint() {
+inline const char* MemStream::advance_by(uint64_t amount) {
+  const char* retval = ptr_;
+
+  if (uint64_t(end_ - ptr_) >= amount) {
+    ptr_ += amount;
+    return retval;
+  }
+
+  realize_more(amount);
+
+  ptr_ += amount;
+  return retval;
+}
+
+inline uint64_t MemStream::must_read_varint() {
   assert(has_more());
+  if (!has_at_least_varint()) {
+    return read_varint_slow();
+  }
   VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
   advance_by(res.advance);
   return res.value;
 }
+
+uint64_t MemStream::read_varint_slow() {
+  realize_more(0);
+  if (has_at_least_varint()) {
+    return must_read_varint();
+  }
+  // auto page_end_gap = (~reinterpret_cast<uintptr_t>(ptr_) + 1) & 4095;
+  // if (page_end_gap <= kMaxVarintSize) {
+  //   return must_read_varint();
+  // }
+  char tmp[kMaxVarintSize];
+  memcpy(tmp, ptr_, end_ - ptr_);
+  VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(tmp);
+  advance_by(res.advance); // will abort if we've read past eof
+  return res.value;
+}
+
+class ConstMapperHolder {
+public:
+  ConstMapperHolder(const char* begin, const char* end)
+    : const_mapper_(begin, end - begin) {
+  }
+  virtual ~ConstMapperHolder() {};
+protected:
+  ConstMapper const_mapper_;
+};
+
+class ConstMemStream : public ConstMapperHolder, public MemStream {
+public:
+  ConstMemStream(const char* begin, const char* end)
+    : ConstMapperHolder(begin, end), MemStream(&const_mapper_) {
+  }
+};
 
 struct OuterEvent {
   uint8_t type;
@@ -115,8 +181,7 @@ struct OuterEvent {
 
 class OuterEvStream : public MemStream {
 public:
-  OuterEvStream(const char *begin, const char *end)
-    : MemStream(begin, end) {}
+  OuterEvStream(Mapper* mapper) : MemStream(mapper) {}
   ~OuterEvStream() {}
 
   bool next(OuterEvent *ev);
@@ -154,9 +219,8 @@ bool OuterEvStream::next(OuterEvent *ev) {
       ev->thread_id = buf.thread_id;
       ev->ts = buf.ts;
       ev->cpu = buf.cpu;
-      ev->buf_start = ptr_;
-      advance_by(buf.size);
-      ev->buf_end = ptr_;
+      ev->buf_start = advance_by(buf.size);
+      ev->buf_end = ev->buf_start + buf.size;
       break;
     }
     case EventsEncoder::kEventEnd:
@@ -302,7 +366,7 @@ public:
         return false;
       }
       active_buf = bufs.front();
-      active_stream.reset(new MemStream(active_buf.buf_start, active_buf.buf_end));
+      active_stream.reset(new ConstMemStream(active_buf.buf_start, active_buf.buf_end));
     }
     return true;
   }
@@ -380,16 +444,16 @@ struct SerializeState {
 };
 
 void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
-  const char* begin = mapper->GetStart();
-  const char* end = begin + mapper->Realize(begin, 1ULL << 40);
+  // const char* begin = mapper->GetBegin();
+  // const char* end = begin + mapper->Realize(begin, 1ULL << 40);
 
-  OuterEvStream s(begin, end);
+  OuterEvStream s(mapper);
   SerializeState state;
 
   auto& heap = state.heap;
 
-  uint64_t recv_thread_id = ~uint64_t{0};
-  uint64_t recv_ts = 0;
+  // uint64_t recv_thread_id = ~uint64_t{0};
+  // uint64_t recv_ts = 0;
 
   for (;;) {
     OuterEvent ev;
@@ -414,7 +478,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         if (was_empty) {
           thread->active_buf = ev;
           assert(thread->active_stream.get() == nullptr);
-          thread->active_stream.reset(new MemStream(ev.buf_start, ev.buf_end));
+          thread->active_stream.reset(new ConstMemStream(ev.buf_start, ev.buf_end));
 
           bool ok = thread->update_last_event();
           if (ok) {
