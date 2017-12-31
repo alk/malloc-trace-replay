@@ -374,6 +374,54 @@ bool ReplayReceiver::HasAllocated(uint64_t tok) {
   return allocated_.Lookup(tok) != nullptr;
 }
 
+class SimpleMapper : public Mapper {
+public:
+  SimpleMapper(int fd);
+  ~SimpleMapper() {}
+  const char* GetStart() {
+    return mmap_area_;
+  }
+  size_t Realize(const char* start, size_t len) {
+    const char* end = start + len;
+    if (end > mmap_area_ + size_) {
+      end = mmap_area_ + size_;
+    }
+    return end - start;
+  }
+private:
+  const int fd_;
+  const char* mmap_area_;
+  off_t size_;
+};
+
+SimpleMapper::SimpleMapper(int fd) : fd_(fd) {
+  struct stat st;
+  int rv = fstat(fd, &st);
+  if (rv < 0) {
+    pabort("fstat");
+  }
+
+  auto pagesize = getpagesize();
+  auto mmap_size = ((st.st_size + pagesize - 1) & ~(pagesize - 1)) + pagesize;
+  auto mmap_result = mmap(nullptr, mmap_size,
+                          PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+  if (mmap_result == MAP_FAILED) {
+    pabort("mmap");
+  }
+  mmap_area_ = static_cast<const char *>(mmap_result);
+  mmap_result = mmap(mmap_result, st.st_size,
+                     PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0);
+  if (mmap_result == MAP_FAILED) {
+    pabort("mmap");
+  }
+
+  rv = madvise(mmap_result, st.st_size, MADV_SEQUENTIAL);
+  if (rv < 0) {
+    pabort("madvise");
+  }
+  size_ = st.st_size;
+}
+
 int main(int argc, char **argv) {
   int fd = 0;
   if (argc < 3) {
@@ -391,40 +439,15 @@ int main(int argc, char **argv) {
     pabort("open");
   }
 
+  int rv = posix_fadvise(fd2, 0, 0, POSIX_FADV_SEQUENTIAL);
+  if (rv < 0) {
+    pabort("posix_fadvise");
+  }
   // if our output is pipe to some decompressor, larger pipe buffer is
   // good idea
 #ifdef F_SETPIPE_SZ
   fcntl(fd2, F_SETPIPE_SZ, 1 << 20);
 #endif
-
-  struct stat st;
-  int rv = fstat(fd, &st);
-  if (rv < 0) {
-    pabort("fstat");
-  }
-
-  auto pagesize = getpagesize();
-  auto mmap_size = ((st.st_size + pagesize - 1) & ~(pagesize - 1)) + pagesize;
-  auto mmap_result = mmap(nullptr, mmap_size,
-                          PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
-  if (mmap_result == MAP_FAILED) {
-    pabort("mmap");
-  }
-  const char* mmap_area = static_cast<const char *>(mmap_result);
-  mmap_result = mmap(mmap_result, st.st_size,
-                     PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0);
-  if (mmap_result == MAP_FAILED) {
-    pabort("mmap");
-  }
-
-  rv = madvise(mmap_result, st.st_size, MADV_SEQUENTIAL);
-  if (rv < 0) {
-    pabort("madvise");
-  }
-  rv = posix_fadvise(fd2, 0, st.st_size, POSIX_FADV_SEQUENTIAL);
-  if (rv < 0) {
-    pabort("posix_fadvise");
-  }
 
   ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
     int rv = write(fd2, buf, sz);
@@ -442,5 +465,6 @@ int main(int argc, char **argv) {
     });
 
   // SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &printer);
-  SerializeMallocEvents(mmap_area, mmap_area + st.st_size, &receiver);
+  SimpleMapper m(fd);
+  SerializeMallocEvents(&m, &receiver);
 }

@@ -24,6 +24,8 @@
 #include "varint_codec.h"
 #include "malloc_trace_encoder.h"
 
+Mapper::~Mapper() {}
+
 typedef tcmalloc::VarintCodec VarintCodec;
 typedef tcmalloc::EventsEncoder EventsEncoder;
 
@@ -377,8 +379,10 @@ struct SerializeState {
   }
 };
 
-void SerializeMallocEvents(const char* begin, const char* end,
-                           EventsReceiver* receiver) {
+void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
+  const char* begin = mapper->GetStart();
+  const char* end = begin + mapper->Realize(begin, 1ULL << 40);
+
   OuterEvStream s(begin, end);
   SerializeState state;
 

@@ -3,6 +3,8 @@
 #define EVENTS_SERIALIZER_H
 
 #include <stdint.h>
+#include <utility>
+#include <stddef.h>
 
 class EventsReceiver {
 public:
@@ -20,7 +22,13 @@ public:
   virtual bool HasAllocated(uint64_t tok) = 0;
 };
 
-void SerializeMallocEvents(const char* begin, const char* end,
-                           EventsReceiver* receiver);
+class Mapper {
+public:
+  virtual ~Mapper();
+  virtual const char* GetStart() = 0;
+  virtual size_t Realize(const char* start, size_t len) = 0;
+};
+
+void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver);
 
 #endif
