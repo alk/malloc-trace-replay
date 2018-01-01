@@ -96,6 +96,12 @@ public:
 
   inline bool try_read_varint(uint64_t* place);
 
+  const char* get_ptr() {
+    return ptr_;
+  }
+
+  void unrealize_up_to(const char* ptr);
+
 private:
   const uint64_t kRealizeSize = 1 << 20;
   const size_t kMaxVarintSize = 10;
@@ -198,6 +204,23 @@ uint64_t MemStream::read_varint_slow() {
   VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(tmp);
   advance_by(res.advance); // will abort if we've read past eof
   return res.value;
+}
+
+static const int kUnrealizeStep = 128 << 20;
+
+void MemStream::unrealize_up_to(const char* ptr) {
+  assert(ptr >= realized_start_);
+  if (ptr - realized_start_ < kUnrealizeStep) {
+    return;
+  }
+
+  ptr -= reinterpret_cast<uintptr_t>(ptr) & 4096;
+  size_t got_amount = mapper_->Realize(ptr, end_ - ptr);
+  if (ptr + got_amount < end_) {
+    abort();
+  }
+  ptr = realized_start_;
+  end_ = realized_start_ + got_amount;
 }
 
 class ConstMapperHolder {
@@ -517,6 +540,9 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
 
   bool seen_end = false;
 
+  const char* last_barriers[2] = {mapper->GetBegin(), mapper->GetBegin()};
+  int last_barriers_index = 0;
+
   while (!seen_end) {
     OuterEvent ev;
     for (;;) {
@@ -563,6 +589,11 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
     }
     if (ev.type == EventsEncoder::kEventEnd) {
       seen_end = true;
+    } else {
+      last_barriers_index = (last_barriers_index + 1) % 2;
+      const char* prev_ptr = last_barriers[last_barriers_index];
+      s.unrealize_up_to(prev_ptr);
+      last_barriers[last_barriers_index] = s.get_ptr();
     }
 
     while (!heap.empty()) {

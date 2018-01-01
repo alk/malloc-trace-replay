@@ -34,7 +34,8 @@
 
 static void pabort(const char *t) {
   perror(t);
-  abort();
+  // abort();
+  asm volatile ("int $3");
 }
 
 class PrintReceiver : public EventsReceiver {
@@ -433,6 +434,86 @@ ConstMapper mmap_mapper(int fd) {
   return ConstMapper(mmap_area, st.st_size);
 }
 
+class ReaderMapper : public Mapper {
+public:
+  ReaderMapper(int fd);
+  ~ReaderMapper() {}
+  const char* GetBegin() override {
+    return mmap_area_;
+  }
+  size_t Realize(const char* start, size_t len) override;
+private:
+  const int fd_;
+  const char* mmap_area_;
+  const char* last_start_;
+  const char* last_end_;
+  bool seen_eof_{};
+};
+
+ReaderMapper::ReaderMapper(int fd) : fd_(fd) {
+  auto mmap_result = mmap(nullptr, 1ULL << 40,
+                          PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+  if (mmap_result == MAP_FAILED) {
+    pabort("mmap");
+  }
+
+  mmap_area_ = reinterpret_cast<const char*>(mmap_result);
+  last_end_ = last_start_ = mmap_area_;
+}
+
+size_t ReaderMapper::Realize(const char* start, size_t len) {
+  if (start > last_end_) {
+    abort();
+  }
+
+  if (reinterpret_cast<uintptr_t>(start) + len < reinterpret_cast<uintptr_t>(start)) {
+    abort();
+  }
+
+  intptr_t to_drop = start - last_start_;
+  if (to_drop > 0) {
+    const char* start2 = start - (reinterpret_cast<uintptr_t>(start) & 4095);
+    mmap(const_cast<char *>(last_start_), start2 - last_start_,
+         PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, 0, 0);
+    last_start_ = start2;
+  }
+
+  const char* new_last_end = start + len;
+  new_last_end += (~reinterpret_cast<uintptr_t>(new_last_end) + 1) & 4095;
+
+  const char* last_end_page = last_end_ + ((~reinterpret_cast<uintptr_t>(last_end_) + 1) & 4095);
+
+  if (last_end_page != new_last_end) {
+    auto mmap_result = mmap(const_cast<char *>(last_end_page), new_last_end - last_end_page,
+                            PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_POPULATE,
+                            0, 0);
+    if (mmap_result == MAP_FAILED) {
+      pabort("mmap");
+    }
+  }
+
+  char* read_ptr = const_cast<char*>(last_end_);
+
+  while (read_ptr < new_last_end) {
+    int rv = read(fd_, read_ptr, new_last_end - read_ptr);
+    if (rv < 0) {
+      if (errno == EINTR) {
+        rv = 0;
+      } else {
+        perror("read");
+        abort();
+      }
+    } else if (rv == 0) {
+      break;
+    }
+    read_ptr += rv;
+  }
+
+  last_end_ = read_ptr;
+  return last_end_ - start;
+}
+
 int main(int argc, char **argv) {
   int fd = 0;
   if (argc < 3) {
@@ -457,7 +538,7 @@ int main(int argc, char **argv) {
   // if our output is pipe to some decompressor, larger pipe buffer is
   // good idea
 #ifdef F_SETPIPE_SZ
-  fcntl(fd2, F_SETPIPE_SZ, 1 << 20);
+  fcntl(fd2, F_SETPIPE_SZ, 4 << 20);
 #endif
 
   ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
@@ -476,6 +557,7 @@ int main(int argc, char **argv) {
     });
 
   ConstMapper m{mmap_mapper(fd)};
+  // ReaderMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
 }
