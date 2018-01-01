@@ -73,6 +73,7 @@ public:
 
   inline uint64_t must_read_varint();
   inline const char* advance_by(uint64_t amount);
+
   bool has_more() {
     if (ptr_ < end_) {
       return true;
@@ -80,6 +81,20 @@ public:
     realize_more(0);
     return ptr_ < end_;
   }
+
+  bool try_advance_by(uint64_t amount, const char** place) {
+    permissive_advance_ = true;
+    const char* old_ptr = advance_by(amount);
+    permissive_advance_ = false;
+    if (ptr_ > end_) {
+      ptr_ = end_;
+      return false;
+    }
+    *place = old_ptr;
+    return true;
+  }
+
+  inline bool try_read_varint(uint64_t* place);
 
 private:
   const uint64_t kRealizeSize = 1 << 20;
@@ -89,28 +104,28 @@ private:
     return ptr_ + kMaxVarintSize <= end_;
   }
 
-  void realize_more(uint64_t min_amount);
+  bool realize_more(uint64_t min_amount);
   uint64_t read_varint_slow();
+  const char* advance_by_slow(uint64_t amount);
 
   const char *ptr_;
   const char *end_;
   const char *realized_start_;
   const char *const begin_;
   Mapper* const mapper_;
+  bool permissive_advance_{};
 };
 
 MemStream::MemStream(Mapper* mapper) : begin_(mapper->GetBegin()), mapper_(mapper) {
   realized_start_ = end_ = ptr_ = begin_;
 }
 
-void MemStream::realize_more(uint64_t min_amount) {
+bool MemStream::realize_more(uint64_t min_amount) {
   size_t realize_amount = ptr_ - realized_start_ + std::max(min_amount, kRealizeSize);
   size_t got_amount = mapper_->Realize(realized_start_, realize_amount);
 
   end_ = realized_start_ + got_amount;
-  if (uint64_t(end_ - ptr_) < min_amount) {
-    panic("trying to realize with min_amount beyond end of data");
-  }
+  return (uint64_t(end_ - ptr_) >= min_amount);
 }
 
 inline const char* MemStream::advance_by(uint64_t amount) {
@@ -120,21 +135,53 @@ inline const char* MemStream::advance_by(uint64_t amount) {
     ptr_ += amount;
     return retval;
   }
+  return advance_by_slow(amount);
+}
 
-  realize_more(amount);
+inline const char* MemStream::advance_by_slow(uint64_t amount) {
+  const char* retval = ptr_;
+  bool ok = realize_more(amount);
+
+  if (!ok) {
+    if (!permissive_advance_) {
+      panic("trying to realize with min_amount beyond end of data");
+    }
+    ptr_ = end_ + 1;
+    return retval;
+  }
 
   ptr_ += amount;
   return retval;
 }
 
 inline uint64_t MemStream::must_read_varint() {
-  assert(has_more());
   if (!has_at_least_varint()) {
     return read_varint_slow();
   }
   VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
   advance_by(res.advance);
   return res.value;
+}
+
+inline bool MemStream::try_read_varint(uint64_t* place) {
+  if (has_at_least_varint()) {
+    VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
+    advance_by(res.advance);
+    *place = res.value;
+    return true;
+  }
+
+  permissive_advance_ = true;
+  uint64_t result = read_varint_slow();
+  permissive_advance_ = false;
+
+  if (ptr_ > end_) {
+    ptr_ = end_;
+    return false;
+  }
+
+  *place = result;
+  return true;
 }
 
 uint64_t MemStream::read_varint_slow() {
@@ -201,7 +248,11 @@ bool OuterEvStream::next(OuterEvent *ev) {
 
   memset(ev, 0, sizeof(*ev));
 
-  uint64_t first_word = must_read_varint();
+  uint64_t first_word;
+  bool ok = try_read_varint(&first_word);
+  if (!ok) {
+    return false;
+  }
   unsigned evtype = EventsEncoder::decode_type(first_word);
   ev->type = evtype;
 
@@ -211,22 +262,37 @@ bool OuterEvStream::next(OuterEvent *ev) {
       break;
     }
     case EventsEncoder::kEventBuf: {
-      uint64_t second_word = must_read_varint();
-      uint64_t third_word = must_read_varint();
+      uint64_t second_word;
+      uint64_t third_word;
+      ok = try_read_varint(&second_word);
+      if (!ok) {
+        return false;
+      }
+      ok = try_read_varint(&third_word);
+      if (!ok) {
+        return false;
+      }
 
       BufEvent buf;
       EventsEncoder::decode_buffer(&buf, first_word, second_word, third_word);
       ev->thread_id = buf.thread_id;
       ev->ts = buf.ts;
       ev->cpu = buf.cpu;
-      ev->buf_start = advance_by(buf.size);
+      ok = try_advance_by(buf.size, &ev->buf_start);
+      if (!ok) {
+        return false;
+      }
       ev->buf_end = ev->buf_start + buf.size;
       break;
     }
     case EventsEncoder::kEventEnd:
       break;
     case EventsEncoder::kEventSyncBarrier: {
-      uint64_t second_word = must_read_varint();
+      uint64_t second_word;
+      ok = try_read_varint(&second_word);
+      if (!ok) {
+        return false;
+      }
       EventsEncoder::decode_sync_barrier(ev, first_word, second_word);
       break;
     }
@@ -449,12 +515,15 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
 
   auto& heap = state.heap;
 
-  for (;;) {
+  bool seen_end = false;
+
+  while (!seen_end) {
     OuterEvent ev;
     for (;;) {
       bool ok = s.next(&ev);
       if (!ok) {
-        panic("unexpected stream end");
+        seen_end = true;
+        break;
       }
       if (ev.type == EventsEncoder::kEventEnd
           || ev.type == EventsEncoder::kEventSyncBarrier) {
@@ -493,7 +562,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       }
     }
     if (ev.type == EventsEncoder::kEventEnd) {
-      return;
+      seen_end = true;
     }
 
     while (!heap.empty()) {
