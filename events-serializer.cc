@@ -444,16 +444,10 @@ struct SerializeState {
 };
 
 void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
-  // const char* begin = mapper->GetBegin();
-  // const char* end = begin + mapper->Realize(begin, 1ULL << 40);
-
   OuterEvStream s(mapper);
   SerializeState state;
 
   auto& heap = state.heap;
-
-  // uint64_t recv_thread_id = ~uint64_t{0};
-  // uint64_t recv_ts = 0;
 
   for (;;) {
     OuterEvent ev;
