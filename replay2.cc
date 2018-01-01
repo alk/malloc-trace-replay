@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <deque>
 #include <functional>
@@ -212,6 +213,16 @@ I(SwitchThread)
 
 #undef I
 
+uint64_t nanos() {
+  struct timeval tv;
+  int rv = gettimeofday(&tv, nullptr);
+  if (rv != 0) {
+    perror("gettimeofday");
+    abort();
+  }
+  return (tv.tv_usec + uint64_t{1000000} * tv.tv_sec) * uint64_t{1000};
+}
+
 class ReplayReceiver : public EventsReceiver {
 public:
   typedef std::function<int (const void *, size_t)> writer_fn_t;
@@ -256,6 +267,9 @@ private:
   kj::Array<capnp::word> first_segment_;
   MallocMessageBuilder builder_;
   std::vector<std::pair<set_instr_ptr, Orphan<AnyPointer>>> instructions_;
+  uint64_t start_nanos_{nanos()};
+  uint64_t total_instructions_{};
+  uint64_t printed_instructions_{};
 };
 
 static constexpr int kFirstSegmentWordsCount = 1 << 20;
@@ -358,6 +372,16 @@ void ReplayReceiver::Barrier() {
   auto size = instructions_.size();
   if (size == 0) {
     return;
+  }
+
+  total_instructions_ += size;
+  if (total_instructions_ - printed_instructions_ > (4 << 20)) {
+    uint64_t total_nanos = nanos() - start_nanos_;
+    printed_instructions_ = total_instructions_;
+    printf("\rtotal_instructions = %lld; rate = %f ops/sec         \b\b\b\b\b\b\b\b\b",
+           (long long)total_instructions_,
+           (double)total_instructions_ * 1E9 / total_nanos);
+    fflush(stdout);
   }
 
   replay::Batch::Builder batch = builder_.getRoot<replay::Batch>();

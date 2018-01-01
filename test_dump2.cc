@@ -178,7 +178,7 @@ static void replay_instruction(const replay::Instruction::Reader& instruction) {
   }
 }
 
-uint64_t nanos() {
+static uint64_t nanos() {
   struct timeval tv;
   int rv = gettimeofday(&tv, nullptr);
   if (rv != 0) {
