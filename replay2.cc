@@ -495,7 +495,7 @@ size_t ReaderMapper::Realize(const char* start, size_t len) {
 
   char* read_ptr = const_cast<char*>(last_end_);
 
-  while (read_ptr < new_last_end) {
+  if (read_ptr < new_last_end) {
     int rv = read(fd_, read_ptr, new_last_end - read_ptr);
     if (rv < 0) {
       if (errno == EINTR) {
@@ -504,10 +504,9 @@ size_t ReaderMapper::Realize(const char* start, size_t len) {
         perror("read");
         abort();
       }
-    } else if (rv == 0) {
-      break;
+    } else if (rv != 0) {
+      read_ptr += rv;
     }
-    read_ptr += rv;
   }
 
   last_end_ = read_ptr;
