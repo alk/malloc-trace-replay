@@ -25,6 +25,8 @@
 
 #include "instruction.h"
 
+#include "fd-input-mapper.h"
+
 // #include "replay2.capnp.h"
 
 #ifdef __GNUC__
@@ -72,6 +74,7 @@ extern "C" void dump_malloc_stats() {
 static constexpr int kMaxRegisters = 1 << 30;
 static void** registers;
 
+#define NOOP_MALLOC
 #ifdef NOOP_MALLOC
 
 extern "C" {
@@ -270,8 +273,10 @@ int main(int argc, char **argv) {
   // ::kj::BufferedInputStreamWrapper input(
   //   fd0,
   //   kj::arrayPtr(buffer_space, sizeof(buffer_space)));
-  FILE* input = fdopen(fd, "r");
-  setvbuf(input, 0, _IOFBF, 256 << 10);
+  // FILE* input = fdopen(fd, "r");
+  // setvbuf(input, 0, _IOFBF, 256 << 10);
+
+  FDInputMapper m(fd);
 
   uint64_t nanos_start = nanos();
   uint64_t printed_instructions = 0;
@@ -282,8 +287,30 @@ int main(int argc, char **argv) {
   // capnp::ReaderOptions options;
   // options.traversalLimitInWords = 256 << 20;
 
+  const char *realized = m.GetBegin();
+  const char *end = realized;
+  const char *ptr = realized;
+
   Instruction instr(0);
-  while (fread_unlocked(&instr, 1, sizeof(instr), input)) {
+  while (true) {
+    if (end - ptr < 24) {
+      const char* new_realized = realized;
+      if (ptr - realized > (128 << 20)) {
+        new_realized = ptr - (reinterpret_cast<uintptr_t>(ptr) & 4095);
+      }
+      const char *new_end = end + (2 << 20);
+      new_end -= reinterpret_cast<uintptr_t>(new_end) & 4095;
+      new_end = new_realized + m.Realize(new_realized, new_end - new_realized);
+      end = new_end;
+      realized = new_realized;
+      if (end - ptr < 24) {
+        break;
+      }
+    }
+    memcpy(&instr, ptr, sizeof(instr));
+    ptr += sizeof(instr);
+
+  // while (fread_unlocked(&instr, 1, sizeof(instr), input)) {
   // while (input.tryGetReadBuffer() != nullptr) {
   //   ::capnp::PackedMessageReader message(input, options);
   //   // ::capnp::InputStreamMessageReader message(input);
