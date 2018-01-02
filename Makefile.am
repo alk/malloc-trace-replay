@@ -22,7 +22,7 @@ noinst_PROGRAMS += replay2
 replay2_SOURCES = replay2.cc \
 	events-serializer.h events-serializer.cc \
 	id_tree.h malloc_trace_encoder.h \
-	varint_codec.cc varint_codec.h
+	varint_codec.cc varint_codec.h instruction.h
 nodist_replay2_SOURCES = replay2.capnp.c++ replay2.capnp.h
 replay2_LDADD =  @capnp_LIBS@
 replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@

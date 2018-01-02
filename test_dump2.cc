@@ -23,6 +23,8 @@
 #include <capnp/pretty-print.h>
 #include <kj/io.h>
 
+#include "instruction.h"
+
 #include "replay2.capnp.h"
 
 #ifdef __GNUC__
@@ -119,38 +121,34 @@ static void handle_kill_thread() {
   current_thread_id = kInvalidThreadId;
 }
 
-static void replay_instruction(const replay::Instruction::Reader& instruction) {
+static void replay_instruction(const Instruction& i) {
   // printf("%s\n", capnp::prettyPrint(instruction).flatten().cStr());
-  switch (instruction.which()) {
-  case replay::Instruction::Which::MALLOC: {
-    auto m = instruction.getMalloc();
-    auto ptr = malloc(m.getSize());
+  auto reg = i.reg;
+  switch (i.type) {
+  case Instruction::Type::MALLOC: {
+    auto ptr = malloc(i.malloc.size);
     if (ptr == nullptr) {
       abort();
     }
-    registers[m.getReg()] = ptr;
+    registers[reg] = ptr;
     memset(ptr, 0, 8);
     break;
   }
-  case replay::Instruction::Which::FREE: {
-    auto f = instruction.getFree();
-    auto reg = f.getReg();
+  case Instruction::Type::FREE: {
     free(registers[reg]);
     registers[reg] = nullptr;
     break;
   }
-  case replay::Instruction::Which::MEMALIGN: {
-    auto m = instruction.getMemalign();
-    auto ptr = memalign(m.getAlignment(), m.getSize());
-    registers[m.getReg()] = ptr;
+  case Instruction::Type::MEMALIGN: {
+    auto ptr = memalign(i.malloc.align, i.malloc.size);
+    registers[reg] = ptr;
     memset(ptr, 0, 8);
     break;
   }
-  case replay::Instruction::Which::REALLOC: {
-    auto r = instruction.getRealloc();
-    auto old_reg = r.getOldReg();
-    auto new_reg = r.getNewReg();
-    auto ptr = realloc(registers[old_reg], r.getSize());
+  case Instruction::Type::REALLOC: {
+    auto old_reg = reg;
+    auto new_reg = i.realloc.new_reg;
+    auto ptr = realloc(registers[old_reg], i.realloc.new_size);
     if (ptr == nullptr) {
       abort();
     }
@@ -158,19 +156,16 @@ static void replay_instruction(const replay::Instruction::Reader& instruction) {
     registers[new_reg] = ptr;
     break;
   }
-  case replay::Instruction::Which::FREE_SIZED: {
-    auto f = instruction.getFreeSized();
-    auto reg = f.getReg();
+  case Instruction::Type::FREE_SIZED: {
     free(registers[reg]);
     registers[reg] = nullptr;
     break;
   }
-  case replay::Instruction::Which::KILL_THREAD:
+  case Instruction::Type::KILL_THREAD:
     handle_kill_thread();
     break;
-  case replay::Instruction::Which::SWITCH_THREAD: {
-    auto s = instruction.getSwitchThread();
-    handle_switch_thread(s.getThreadID());
+  case Instruction::Type::SWITCH_THREAD: {
+    handle_switch_thread(i.switch_thread.thread_id);
     break;
   }
   default:
@@ -220,27 +215,27 @@ static void setup_malloc_state_fns() {
   }
 }
 
-static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
+// static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
 
-extern "C" void dump_batch(::replay::Batch::Reader* reader) {
-  printf("%s\n", capnp::prettyPrint(*reader).flatten().cStr());
-}
+// extern "C" void dump_batch(::replay::Batch::Reader* reader) {
+//   printf("%s\n", capnp::prettyPrint(*reader).flatten().cStr());
+// }
 
-static int roughly_last_reg(const capnp::List<replay::Instruction>::Reader& instructions) {
-  size_t i = instructions.size() - 1;
-  for (; i >= 0; i--) {
-    auto instr = instructions[i];
-    switch (instr.which()) {
-    case replay::Instruction::Which::MALLOC:
-      return instr.getMalloc().getReg();
-    case replay::Instruction::Which::MEMALIGN:
-      return instr.getMemalign().getReg();
-    case replay::Instruction::Which::FREE:
-      return instr.getFree().getReg();
-    }
-  }
-  return -1;
-}
+// static int roughly_last_reg(const capnp::List<replay::Instruction>::Reader& instructions) {
+//   size_t i = instructions.size() - 1;
+//   for (; i >= 0; i--) {
+//     auto instr = instructions[i];
+//     switch (instr.which()) {
+//     case replay::Instruction::Which::MALLOC:
+//       return instr.getMalloc().getReg();
+//     case replay::Instruction::Which::MEMALIGN:
+//       return instr.getMemalign().getReg();
+//     case replay::Instruction::Which::FREE:
+//       return instr.getFree().getReg();
+//     }
+//   }
+//   return -1;
+// }
 
 int main(int argc, char **argv) {
   mmap_registers();
@@ -260,6 +255,8 @@ int main(int argc, char **argv) {
   // is good idea
 #ifdef F_SETPIPE_SZ
   fcntl(fd, F_SETPIPE_SZ, 1 << 20);
+
+  fcntl(fd, F_SETPIPE_SZ, 4 << 20);
 #endif
 
   signal(SIGINT, [](int dummy) {
@@ -269,10 +266,12 @@ int main(int argc, char **argv) {
   printf("will%s use set/release_malloc_thread_cache\n",
          set_malloc_thread_cache_ptr ? "" : " not");
 
-  ::kj::FdInputStream fd0(fd);
-  ::kj::BufferedInputStreamWrapper input(
-    fd0,
-    kj::arrayPtr(buffer_space, sizeof(buffer_space)));
+  // ::kj::FdInputStream fd0(fd);
+  // ::kj::BufferedInputStreamWrapper input(
+  //   fd0,
+  //   kj::arrayPtr(buffer_space, sizeof(buffer_space)));
+  FILE* input = fdopen(fd, "r");
+  setvbuf(input, 0, _IOFBF, 256 << 10);
 
   uint64_t nanos_start = nanos();
   uint64_t printed_instructions = 0;
@@ -280,30 +279,35 @@ int main(int argc, char **argv) {
 
   // std::unordered_map<uint64_t, ThreadCacheState*> fibers_states;
 
-  capnp::ReaderOptions options;
-  options.traversalLimitInWords = 256 << 20;
+  // capnp::ReaderOptions options;
+  // options.traversalLimitInWords = 256 << 20;
 
-  while (input.tryGetReadBuffer() != nullptr) {
-    ::capnp::PackedMessageReader message(input, options);
-    // ::capnp::InputStreamMessageReader message(input);
+  Instruction instr(0);
+  while (fread_unlocked(&instr, 1, sizeof(instr), input)) {
+  // while (input.tryGetReadBuffer() != nullptr) {
+  //   ::capnp::PackedMessageReader message(input, options);
+  //   // ::capnp::InputStreamMessageReader message(input);
 
-    auto batch = message.getRoot<replay::Batch>();
-    // dump_batch(&batch);
-    auto instructions = batch.getInstructions();
+  //   auto batch = message.getRoot<replay::Batch>();
+  //   // dump_batch(&batch);
+  //   auto instructions = batch.getInstructions();
 
-    for (auto instr : instructions) {
-      total_instructions++;
-      replay_instruction(instr);
-    }
+  //   for (auto instr : instructions) {
+  //     total_instructions++;
+  //     replay_instruction(instr);
+  //   }
+
+    replay_instruction(instr);
+
+    total_instructions += 1;
 
     if (total_instructions - printed_instructions > (4 << 20)) {
       uint64_t total_nanos = nanos() - nanos_start;
       printed_instructions = total_instructions;
-      printf("\rtotal_instructions = %lld; rate = %f ops/sec; live threads: %d, ~last reg: %d         \b\b\b\b\b\b\b\b\b",
+      printf("\rtotal_instructions = %lld; rate = %f ops/sec; live threads: %d         \b\b\b\b\b\b\b\b\b",
              (long long)total_instructions,
              (double)total_instructions * 1E9 / total_nanos,
-             (int)thread_states.size(),
-             roughly_last_reg(instructions));
+             (int)thread_states.size());
       fflush(stdout);
     }
   }

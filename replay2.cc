@@ -31,6 +31,7 @@
 #include "replay2.capnp.h"
 #include "events-serializer.h"
 #include "id_tree.h"
+#include "instruction.h"
 
 static void pabort(const char *t) {
   perror(t);
@@ -222,6 +223,128 @@ uint64_t nanos() {
     abort();
   }
   return (tv.tv_usec + uint64_t{1000000} * tv.tv_sec) * uint64_t{1000};
+}
+
+class SimpleReceiver : public EventsReceiver {
+public:
+  SimpleReceiver(FILE *out) : out_(out) {}
+  ~SimpleReceiver() noexcept {}
+
+  virtual void KillCurrentThread();
+  virtual void SwitchThread(uint64_t thread_id);
+  virtual void SetTS(uint64_t ts, uint64_t cpu);
+  virtual void Malloc(uint64_t tok, uint64_t size);
+  virtual void Memalign(uint64_t tok, uint64_t size, uint64_t align);
+  virtual void Realloc(uint64_t old_tok,
+                       uint64_t new_tok, uint64_t new_size);
+  virtual void Free(uint64_t tok);
+  virtual void FreeSized(uint64_t tok, uint64_t size);
+  virtual void Barrier();
+  virtual bool HasAllocated(uint64_t tok);
+private:
+  FILE* out_;
+  IdTree ids_space_;
+  AllocatedMap allocated_;
+
+  uint64_t start_nanos_{nanos()};
+  uint64_t total_instructions_{};
+  uint64_t printed_instructions_{};
+
+  void dump(const Instruction& i) {
+    fwrite_unlocked(&i, 1, sizeof(i), out_);
+
+    total_instructions_ += 1;
+    if (total_instructions_ - printed_instructions_ > (4 << 20)) {
+      uint64_t total_nanos = nanos() - start_nanos_;
+      printed_instructions_ = total_instructions_;
+      fprintf(stderr,
+              "\rtotal_instructions = %lld; rate = %f ops/sec         \b\b\b\b\b\b\b\b\b",
+              (long long)total_instructions_,
+              (double)total_instructions_ * 1E9 / total_nanos);
+      fflush(stderr);
+    }
+  }
+};
+
+void SimpleReceiver::KillCurrentThread() {
+  Instruction i(Instruction::Type::KILL_THREAD);
+  dump(i);
+}
+
+void SimpleReceiver::SwitchThread(uint64_t thread_id) {
+  Instruction s(Instruction::Type::SWITCH_THREAD);
+  s.switch_thread.thread_id = thread_id;
+  dump(s);
+}
+
+void SimpleReceiver::SetTS(uint64_t ts, uint64_t cpu) {
+}
+
+void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
+  auto reg = ids_space_.allocate_id();
+  allocated_.Insert(tok, reg);
+
+  Instruction m(Instruction::Type::MALLOC);
+  m.reg = reg;
+  m.malloc.size = size;
+  dump(m);
+}
+
+void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
+ auto reg = ids_space_.allocate_id();
+  allocated_.Insert(tok, reg);
+
+  Instruction m(Instruction::Type::MEMALIGN);
+  m.reg = reg;
+  m.malloc.size = size;
+  m.malloc.align = align;
+  dump(m);
+}
+
+void SimpleReceiver::Realloc(uint64_t old_tok,
+                             uint64_t new_tok, uint64_t new_size) {
+  auto* e = allocated_.Lookup(old_tok);
+  auto new_reg = ids_space_.allocate_id();
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
+  allocated_.Insert(new_tok, new_reg);
+  ids_space_.free_id(old_reg);
+
+  Instruction r(Instruction::Type::REALLOC);
+  r.reg = old_reg;
+  r.realloc.new_reg = old_reg;
+  r.realloc.new_size = new_size;
+  dump(r);
+}
+
+void SimpleReceiver::Free(uint64_t tok) {
+  auto* e = allocated_.Lookup(tok);
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
+  ids_space_.free_id(old_reg);
+
+  Instruction f(Instruction::Type::FREE);
+  f.reg = old_reg;
+  dump(f);
+}
+
+void SimpleReceiver::FreeSized(uint64_t tok, uint64_t size) {
+  auto* e = allocated_.Lookup(tok);
+  auto old_reg = e->reg;
+  allocated_.Erase(e);
+  ids_space_.free_id(old_reg);
+
+  Instruction f(Instruction::Type::FREE_SIZED);
+  f.reg = old_reg;
+  f.malloc.size = size;
+  dump(f);
+}
+
+void SimpleReceiver::Barrier() {
+}
+
+bool SimpleReceiver::HasAllocated(uint64_t tok) {
+  return allocated_.Lookup(tok) != nullptr;
 }
 
 class ReplayReceiver : public EventsReceiver {
@@ -538,25 +661,37 @@ int main(int argc, char **argv) {
   // good idea
 #ifdef F_SETPIPE_SZ
   fcntl(fd2, F_SETPIPE_SZ, 1 << 20);
+  fcntl(fd, F_SETPIPE_SZ, 1 << 20);
+
+  fcntl(fd2, F_SETPIPE_SZ, 16 << 20);
 #endif
-
-  ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
-    int rv = write(fd2, buf, sz);
-    if (rv != sz) {
-      pabort("write");
-    }
-    return 0;
-  };
-
-  ReplayReceiver receiver(writer);
-  PrintReceiver printer(&receiver);
 
   signal(SIGINT, [](int dummy) {
       exit(0);
     });
 
+  FILE* output = fdopen(fd2, "w");
+  setvbuf(output, nullptr, _IOFBF, 1 << 20);
+  SimpleReceiver receiver(output);
+
   // ConstMapper m{mmap_mapper(fd)};
   ReaderMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
+
+  // ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
+  //   int rv = write(fd2, buf, sz);
+  //   if (rv != sz) {
+  //     pabort("write");
+  //   }
+  //   return 0;
+  // };
+
+  // ReplayReceiver receiver(writer);
+  // PrintReceiver printer(&receiver);
+
+  // // ConstMapper m{mmap_mapper(fd)};
+  // ReaderMapper m(fd);
+  // // SerializeMallocEvents(&m, &printer);
+  // SerializeMallocEvents(&m, &receiver);
 }
