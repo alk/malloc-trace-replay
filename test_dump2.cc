@@ -1,5 +1,4 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
-// #include <utility>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -26,8 +25,6 @@
 #include "instruction.h"
 
 #include "fd-input-mapper.h"
-
-// #include "replay2.capnp.h"
 
 #ifdef __GNUC__
 #define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)
@@ -125,7 +122,6 @@ static void handle_kill_thread() {
 }
 
 static void replay_instruction(const Instruction& i) {
-  // printf("%s\n", capnp::prettyPrint(instruction).flatten().cStr());
   auto reg = i.reg;
   switch (i.type) {
   case Instruction::Type::MALLOC: {
@@ -205,7 +201,7 @@ static void mmap_registers() {
   }
   registers = static_cast<void **>(mmap_result);
 }
-
+l
 static void setup_malloc_state_fns() {
   void *handle = dlopen(NULL, RTLD_LAZY);
   if (!release_malloc_thread_cache_ptr) {
@@ -217,28 +213,6 @@ static void setup_malloc_state_fns() {
     set_malloc_thread_cache_ptr = reinterpret_cast<bool (*)(ThreadCacheState*)>(v);
   }
 }
-
-// static unsigned char buffer_space[128 << 10] __attribute__((aligned(4096)));
-
-// extern "C" void dump_batch(::replay::Batch::Reader* reader) {
-//   printf("%s\n", capnp::prettyPrint(*reader).flatten().cStr());
-// }
-
-// static int roughly_last_reg(const capnp::List<replay::Instruction>::Reader& instructions) {
-//   size_t i = instructions.size() - 1;
-//   for (; i >= 0; i--) {
-//     auto instr = instructions[i];
-//     switch (instr.which()) {
-//     case replay::Instruction::Which::MALLOC:
-//       return instr.getMalloc().getReg();
-//     case replay::Instruction::Which::MEMALIGN:
-//       return instr.getMemalign().getReg();
-//     case replay::Instruction::Which::FREE:
-//       return instr.getFree().getReg();
-//     }
-//   }
-//   return -1;
-// }
 
 int main(int argc, char **argv) {
   mmap_registers();
@@ -269,23 +243,11 @@ int main(int argc, char **argv) {
   printf("will%s use set/release_malloc_thread_cache\n",
          set_malloc_thread_cache_ptr ? "" : " not");
 
-  // ::kj::FdInputStream fd0(fd);
-  // ::kj::BufferedInputStreamWrapper input(
-  //   fd0,
-  //   kj::arrayPtr(buffer_space, sizeof(buffer_space)));
-  // FILE* input = fdopen(fd, "r");
-  // setvbuf(input, 0, _IOFBF, 256 << 10);
-
   FDInputMapper m(fd);
 
   uint64_t nanos_start = nanos();
   uint64_t printed_instructions = 0;
   uint64_t total_instructions = 0;
-
-  // std::unordered_map<uint64_t, ThreadCacheState*> fibers_states;
-
-  // capnp::ReaderOptions options;
-  // options.traversalLimitInWords = 256 << 20;
 
   const char *realized = m.GetBegin();
   const char *end = realized;
@@ -309,20 +271,6 @@ int main(int argc, char **argv) {
     }
     memcpy(&instr, ptr, sizeof(instr));
     ptr += sizeof(instr);
-
-  // while (fread_unlocked(&instr, 1, sizeof(instr), input)) {
-  // while (input.tryGetReadBuffer() != nullptr) {
-  //   ::capnp::PackedMessageReader message(input, options);
-  //   // ::capnp::InputStreamMessageReader message(input);
-
-  //   auto batch = message.getRoot<replay::Batch>();
-  //   // dump_batch(&batch);
-  //   auto instructions = batch.getInstructions();
-
-  //   for (auto instr : instructions) {
-  //     total_instructions++;
-  //     replay_instruction(instr);
-  //   }
 
     replay_instruction(instr);
 
