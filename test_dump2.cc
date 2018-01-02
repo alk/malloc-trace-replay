@@ -280,8 +280,11 @@ int main(int argc, char **argv) {
 
   // std::unordered_map<uint64_t, ThreadCacheState*> fibers_states;
 
+  capnp::ReaderOptions options;
+  options.traversalLimitInWords = 256 << 20;
+
   while (input.tryGetReadBuffer() != nullptr) {
-    ::capnp::PackedMessageReader message(input);
+    ::capnp::PackedMessageReader message(input, options);
     // ::capnp::InputStreamMessageReader message(input);
 
     auto batch = message.getRoot<replay::Batch>();
