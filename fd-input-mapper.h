@@ -44,6 +44,4 @@ private:
   bool seen_eof_{};
 };
 
-
-
 #endif
