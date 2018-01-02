@@ -25,7 +25,7 @@
 
 #include "instruction.h"
 
-#include "replay2.capnp.h"
+// #include "replay2.capnp.h"
 
 #ifdef __GNUC__
 #define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)

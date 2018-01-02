@@ -6,6 +6,8 @@
 #include <utility>
 #include <stddef.h>
 
+#include "fd-input-mapper.h"
+
 class EventsReceiver {
 public:
   virtual ~EventsReceiver() noexcept;
@@ -20,31 +22,6 @@ public:
   virtual void FreeSized(uint64_t tok, uint64_t size) = 0;
   virtual void Barrier() = 0;
   virtual bool HasAllocated(uint64_t tok) = 0;
-};
-
-class Mapper {
-public:
-  virtual ~Mapper();
-  virtual const char* GetBegin() = 0;
-  virtual size_t Realize(const char* start, size_t len) = 0;
-};
-
-class ConstMapper final : public Mapper {
-public:
-  ConstMapper(const char* begin, size_t size) : begin_(begin), size_(size) {}
-  ~ConstMapper();
-
-  const char* GetBegin() override {return begin_;}
-  size_t Realize(const char* start, size_t len) override {
-    const char* end = start + len;
-    if (end > begin_ + size_) {
-      end = begin_ + size_;
-    }
-    return end - start;
-  }
-private:
-  const char* begin_;
-  size_t size_;
 };
 
 void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver);

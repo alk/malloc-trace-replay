@@ -10,7 +10,9 @@ export LD_RUN_PATH
 
 noinst_PROGRAMS = test_dump2
 
-test_dump2_SOURCES = test_dump2.cc replay2.capnp.c++ replay2.capnp.h
+test_dump2_SOURCES = test_dump2.cc \
+	replay2.capnp.c++ replay2.capnp.h \
+	fd-input-mapper.h fd-input-mapper.cc
 test_dump2_LDADD =  @capnp_LIBS@
 test_dump2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@
 
@@ -22,7 +24,8 @@ noinst_PROGRAMS += replay2
 replay2_SOURCES = replay2.cc \
 	events-serializer.h events-serializer.cc \
 	id_tree.h malloc_trace_encoder.h \
-	varint_codec.cc varint_codec.h instruction.h
+	varint_codec.cc varint_codec.h instruction.h \
+	fd-input-mapper.h fd-input-mapper.cc
 nodist_replay2_SOURCES = replay2.capnp.c++ replay2.capnp.h
 replay2_LDADD =  @capnp_LIBS@
 replay2_CXXFLAGS = $(AM_CXXFLAGS) @capnp_CFLAGS@

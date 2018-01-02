@@ -24,9 +24,6 @@
 #include "varint_codec.h"
 #include "malloc_trace_encoder.h"
 
-Mapper::~Mapper() {}
-ConstMapper::~ConstMapper() {}
-
 typedef tcmalloc::VarintCodec VarintCodec;
 typedef tcmalloc::EventsEncoder EventsEncoder;
 
