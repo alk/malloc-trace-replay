@@ -537,7 +537,7 @@ int main(int argc, char **argv) {
   // if our output is pipe to some decompressor, larger pipe buffer is
   // good idea
 #ifdef F_SETPIPE_SZ
-  fcntl(fd2, F_SETPIPE_SZ, 4 << 20);
+  fcntl(fd2, F_SETPIPE_SZ, 1 << 20);
 #endif
 
   ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
@@ -555,8 +555,8 @@ int main(int argc, char **argv) {
       exit(0);
     });
 
-  ConstMapper m{mmap_mapper(fd)};
-  // ReaderMapper m(fd);
+  // ConstMapper m{mmap_mapper(fd)};
+  ReaderMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
 }
