@@ -403,6 +403,7 @@ public:
   std::deque<OuterEvent> bufs;
   bool dead{};
   bool signalled{};
+  bool in_pending_frees{};
 
   bool update_last_event_inner() {
     memset(&last_event, 0, sizeof(last_event));
@@ -517,6 +518,7 @@ struct SerializeState {
       return;
     }
     heap.push(it->second);
+    it->second->in_pending_frees = false;
     pending_frees.erase(it);
   }
 
@@ -668,6 +670,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         }
       } else {
         heap.pop();
+        thread->in_pending_frees = true;
         state.pending_frees.insert({wait_tok, thread});
       }
 
@@ -679,12 +682,15 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       }
     }
 
-    assert(state.pending_frees.empty());
-    assert(heap.empty());
-
+    std::vector<FullThreadState*> next_to_die;
     for (auto thread : state.to_die) {
       assert(thread->dead);
       assert(thread->bufs.empty());
+      if (thread->in_pending_frees) {
+        assert(!thread->signalled);
+        next_to_die.push_back(thread);
+        continue;
+      }
       if (!thread->signalled) {
         receiver->SwitchThread(thread->thread_id);
         receiver->KillCurrentThread();
@@ -692,7 +698,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       }
       state.threads.erase(*thread);
     }
-    state.to_die.clear();
+    state.to_die.swap(next_to_die);
 
     receiver->Barrier();
   }
