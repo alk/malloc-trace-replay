@@ -120,6 +120,9 @@ public:
   Element* Lookup(uint64_t token);
   void Erase(Element *e);
   void Insert(uint64_t token, uint64_t reg);
+  size_t Size() {
+    return set_.size();
+  }
 
 private:
   typedef unordered_multiset<Element,
@@ -194,7 +197,9 @@ uint64_t nanos() {
 class SimpleReceiver : public EventsReceiver {
 public:
   SimpleReceiver(FILE *out) : out_(out) {}
-  ~SimpleReceiver() noexcept {}
+  ~SimpleReceiver() noexcept {
+    fprintf(stderr, "left allocated: %zu\n", allocated_.Size());
+  }
 
   virtual void KillCurrentThread();
   virtual void SwitchThread(uint64_t thread_id);
