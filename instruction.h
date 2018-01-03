@@ -12,7 +12,8 @@ struct Instruction {
     MEMALIGN = 3,
     REALLOC = 4,
     SWITCH_THREAD = 5,
-    KILL_THREAD = 6
+    KILL_THREAD = 6,
+    SET_TS_CPU = 7
   };
   uint64_t type:8;
   uint64_t reg:56;
@@ -28,6 +29,10 @@ struct Instruction {
     struct {
       uint64_t thread_id;
     } switch_thread;
+    struct {
+      uint64_t ts;
+      uint64_t cpu;
+    } ts_cpu;
   };
 
   explicit Instruction(uint64_t type) {

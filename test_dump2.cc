@@ -158,10 +158,11 @@ static void replay_instruction(const Instruction& i) {
   case Instruction::Type::KILL_THREAD:
     handle_kill_thread();
     break;
-  case Instruction::Type::SWITCH_THREAD: {
+  case Instruction::Type::SWITCH_THREAD:
     handle_switch_thread(i.switch_thread.thread_id);
     break;
-  }
+  case Instruction::Type::SET_TS_CPU:
+    break; // do nothing
   default:
     abort();
   }
