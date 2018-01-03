@@ -17,11 +17,6 @@
 #include <vector>
 #include <unordered_map>
 
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
-#include <capnp/pretty-print.h>
-#include <kj/io.h>
-
 #include "instruction.h"
 
 #include "fd-input-mapper.h"

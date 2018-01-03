@@ -1,6 +1,8 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
 #ifndef INSTRUCTION_H
 #define INSTRUCTION_H
+#include <stdint.h>
+#include <string.h>
 
 struct Instruction {
   enum Type {

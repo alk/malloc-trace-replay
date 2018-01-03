@@ -15,11 +15,6 @@ AC_PROG_RANLIB
 AC_PROG_CXX
 AX_CXX_COMPILE_STDCXX_11([ext], [mandatory])
 
-PKG_CHECK_MODULES([capnp], [capnp kj])
-
-AC_ARG_VAR([CAPNP], [capnp tool to invoke])
-AS_IF([test "x$CAPNP" = "x"], [AC_SUBST([CAPNP], [capnp])])
-
 AC_ARG_VAR([LD_RUN_PATH], [usual thing])
 
 AX_GENERATE_CHANGELOG
