@@ -380,7 +380,7 @@ int main(int argc, char **argv) {
     });
 
   FILE* output = fdopen(fd2, "w");
-  setvbuf(output, nullptr, _IOFBF, 1 << 20);
+  setvbuf(output, nullptr, _IOFBF, 256 << 10);
   SimpleReceiver receiver(output);
 
   // ConstMapper m{mmap_mapper(fd)};
