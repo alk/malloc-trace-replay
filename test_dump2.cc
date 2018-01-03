@@ -201,7 +201,7 @@ static void mmap_registers() {
   }
   registers = static_cast<void **>(mmap_result);
 }
-l
+
 static void setup_malloc_state_fns() {
   void *handle = dlopen(NULL, RTLD_LAZY);
   if (!release_malloc_thread_cache_ptr) {
