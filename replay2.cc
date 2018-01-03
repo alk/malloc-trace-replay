@@ -387,20 +387,4 @@ int main(int argc, char **argv) {
   FDInputMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
-
-  // ReplayReceiver::writer_fn_t writer = [fd2] (const void *buf, size_t sz) -> int{
-  //   int rv = write(fd2, buf, sz);
-  //   if (rv != sz) {
-  //     pabort("write");
-  //   }
-  //   return 0;
-  // };
-
-  // ReplayReceiver receiver(writer);
-  // PrintReceiver printer(&receiver);
-
-  // // ConstMapper m{mmap_mapper(fd)};
-  // FDInputMapper m(fd);
-  // // SerializeMallocEvents(&m, &printer);
-  // SerializeMallocEvents(&m, &receiver);
 }
