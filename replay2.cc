@@ -245,9 +245,9 @@ void SimpleReceiver::SwitchThread(uint64_t thread_id) {
 
 void SimpleReceiver::SetTS(uint64_t ts, uint64_t cpu) {
   Instruction t(Instruction::Type::SET_TS_CPU);
-  s.ts_cpu.ts = ts;
-  s.ts_cpu.cpu = cpu;
-  dump(s);
+  t.ts_cpu.ts = ts;
+  t.ts_cpu.cpu = cpu;
+  dump(t);
 }
 
 void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
