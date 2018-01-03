@@ -325,10 +325,11 @@ int main(int argc, char **argv) {
     if (total_instructions - printed_instructions > (4 << 20)) {
       uint64_t total_nanos = nanos() - nanos_start;
       printed_instructions = total_instructions;
-      printf("\rtotal_instructions = %lld; rate = %f ops/sec; live threads: %d         \b\b\b\b\b\b\b\b\b",
+      printf("\rtotal_instructions = %lld; rate = %f ops/sec; live threads: %d; ~last reg: %d         \b\b\b\b\b\b\b\b\b",
              (long long)total_instructions,
              (double)total_instructions * 1E9 / total_nanos,
-             (int)thread_states.size());
+             (int)thread_states.size(),
+             (int)next_instr.reg);
       fflush(stdout);
     }
   }
