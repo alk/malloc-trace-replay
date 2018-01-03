@@ -679,6 +679,10 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       }
     }
 
+    if (!state.pending_frees.empty()) {
+      fprintf(stderr, "\n\ngot a case with %d threads in pending frees\n", int(state.pending_frees.size()));
+    }
+
     std::vector<FullThreadState*> next_to_die;
     for (auto thread : state.to_die) {
       assert(thread->dead);
@@ -693,10 +697,19 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         receiver->KillCurrentThread();
         state.recv_thread_id = SerializeState::kInvalidThreadID;
       }
+      assert(thread->bufs.empty());
+      assert(thread->active_stream.get() == nullptr);
       state.threads.erase(*thread);
     }
     state.to_die.swap(next_to_die);
 
     receiver->Barrier();
+  }
+
+  for (const auto& a_thread : state.threads) {
+    assert(a_thread.bufs.empty());
+    assert(a_thread.active_stream.get() == nullptr);
+    assert(!a_thread.dead);
+    assert(!a_thread.in_pending_frees);
   }
 }
