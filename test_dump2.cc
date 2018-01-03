@@ -214,6 +214,39 @@ static void setup_malloc_state_fns() {
   }
 }
 
+char buffer[16 << 20];
+char *buf_ptr = buffer;
+char *buf_end = buffer;
+
+const int kMinReadAmount = 1024;
+const int kMinBufSizeToRebase = kMinReadAmount;
+
+static void refill_buffer(int fd) {
+  if (buffer + sizeof(buffer) - buf_end < kMinBufSizeToRebase) {
+    int amount = buf_end - buf_ptr;
+    memcpy(buffer, buf_ptr, amount);
+    buf_ptr = buffer;
+    buf_end = buf_ptr + amount;
+  }
+  int rv;
+  int total_read = 0;
+  do {
+    rv = read(fd, buf_end, buffer + sizeof(buffer) - buf_end);
+    if (rv < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      perror("read");
+      abort();
+    }
+    if (rv == 0) {
+      break;
+    }
+    total_read += rv;
+    buf_end += rv;
+  } while (total_read < kMinReadAmount);
+}
+
 int main(int argc, char **argv) {
   mmap_registers();
   setup_malloc_state_fns();
@@ -234,6 +267,8 @@ int main(int argc, char **argv) {
   fcntl(fd, F_SETPIPE_SZ, 1 << 20);
 
   fcntl(fd, F_SETPIPE_SZ, 4 << 20);
+
+  fcntl(fd, F_SETPIPE_SZ, 32 << 20);
 #endif
 
   signal(SIGINT, [](int dummy) {
@@ -243,34 +278,20 @@ int main(int argc, char **argv) {
   printf("will%s use set/release_malloc_thread_cache\n",
          set_malloc_thread_cache_ptr ? "" : " not");
 
-  FDInputMapper m(fd);
-
   uint64_t nanos_start = nanos();
   uint64_t printed_instructions = 0;
   uint64_t total_instructions = 0;
 
-  const char *realized = m.GetBegin();
-  const char *end = realized;
-  const char *ptr = realized;
-
   Instruction instr(0);
   while (true) {
-    if (end - ptr < 24) {
-      const char* new_realized = realized;
-      if (ptr - realized > (128 << 20)) {
-        new_realized = ptr - (reinterpret_cast<uintptr_t>(ptr) & 4095);
-      }
-      const char *new_end = end + (2 << 20);
-      new_end -= reinterpret_cast<uintptr_t>(new_end) & 4095;
-      new_end = new_realized + m.Realize(new_realized, new_end - new_realized);
-      end = new_end;
-      realized = new_realized;
-      if (end - ptr < 24) {
+    if (buf_ptr + sizeof(instr) > buf_end) {
+      refill_buffer(fd);
+      if (buf_ptr + sizeof(instr) > buf_end) {
         break;
       }
     }
-    memcpy(&instr, ptr, sizeof(instr));
-    ptr += sizeof(instr);
+    memcpy(&instr, buf_ptr, sizeof(instr));
+    buf_ptr += sizeof(instr);
 
     replay_instruction(instr);
 
