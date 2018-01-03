@@ -4,6 +4,9 @@ AUTOMAKE_OPTIONS = subdir-objects
 AM_CXXFLAGS = -pthread
 AM_LDFLAGS =  -Wl,--no-as-needed -ldl -pthread
 
+LD_RUN_PATH = @LD_RUN_PATH@
+export LD_RUN_PATH
+
 noinst_PROGRAMS = test_dump2
 
 test_dump2_SOURCES = test_dump2.cc \
