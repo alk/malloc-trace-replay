@@ -115,6 +115,8 @@ static void handle_kill_thread() {
   current_thread_id = kInvalidThreadId;
 }
 
+extern "C" void tc_free_sized(void *, size_t);
+
 static void replay_instruction(const Instruction& i) {
   auto reg = i.reg;
   switch (i.type) {
@@ -150,7 +152,11 @@ static void replay_instruction(const Instruction& i) {
     break;
   }
   case Instruction::Type::FREE_SIZED: {
+#if 0
+    tc_free_sized(registers[reg], i.malloc.size);
+#else
     free(registers[reg]);
+#endif
     registers[reg] = nullptr;
     break;
   }
@@ -198,6 +204,11 @@ static void mmap_registers() {
 }
 
 static void setup_malloc_state_fns() {
+  if (getenv("NO_THREAD_CACHE_SWITCH")) {
+    release_malloc_thread_cache_ptr = nullptr;
+    set_malloc_thread_cache_ptr = nullptr;
+    return;
+  }
   void *handle = dlopen(NULL, RTLD_LAZY);
   if (!release_malloc_thread_cache_ptr) {
     auto v = dlsym(handle, "release_malloc_thread_cache");
@@ -242,6 +253,18 @@ static void refill_buffer(int fd) {
   } while (total_read < kMinReadAmount);
 }
 
+static inline __attribute__((always_inline)) bool buffer_read(int fd, void* ptr, size_t amount) {
+  if (buf_ptr + amount > buf_end) {
+    refill_buffer(fd);
+    if (buf_ptr + amount > buf_end) {
+      return false;
+    }
+  }
+  memcpy(ptr, buf_ptr, amount);
+  buf_ptr += amount;
+  return true;
+}
+
 int main(int argc, char **argv) {
   mmap_registers();
   setup_malloc_state_fns();
@@ -277,16 +300,23 @@ int main(int argc, char **argv) {
   uint64_t printed_instructions = 0;
   uint64_t total_instructions = 0;
 
+  Instruction next_instr(0);
+  bool ok = buffer_read(fd, &next_instr, sizeof(Instruction));
+  if (!ok) abort();
   Instruction instr(0);
   while (true) {
-    if (buf_ptr + sizeof(instr) > buf_end) {
-      refill_buffer(fd);
-      if (buf_ptr + sizeof(instr) > buf_end) {
-        break;
-      }
+    memcpy(&instr, &next_instr, sizeof(instr));
+    bool ok = buffer_read(fd, &next_instr, sizeof(Instruction));
+    if (!ok) {
+      break;
     }
-    memcpy(&instr, buf_ptr, sizeof(instr));
-    buf_ptr += sizeof(instr);
+    if (next_instr.type == Instruction::Type::MALLOC
+        || next_instr.type == Instruction::Type::FREE
+        || next_instr.type == Instruction::Type::FREE_SIZED
+        || next_instr.type == Instruction::Type::MEMALIGN
+        || next_instr.type == Instruction::Type::REALLOC) {
+      __builtin_prefetch(registers + next_instr.reg, 0, 3);
+    }
 
     replay_instruction(instr);
 
