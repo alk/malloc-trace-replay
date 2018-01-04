@@ -117,11 +117,43 @@ static void handle_kill_thread() {
 
 extern "C" void tc_free_sized(void *, size_t);
 
+size_t allocated_count;
+
 static void replay_instruction(const Instruction& i) {
   auto reg = i.reg;
   switch (i.type) {
   case Instruction::Type::MALLOC: {
     auto ptr = malloc(i.malloc.size);
+    //printf("%lld = malloc(%lld)\n", (long long)reg, (long long)(i.malloc.size));
+    if (ptr == nullptr) {
+      abort();
+    }
+    if (registers[reg] != nullptr) {
+      printf("reg = %d\n", (int)reg);
+      asm volatile ("int $3");
+    }
+    assert(registers[reg] == nullptr);
+    registers[reg] = ptr;
+    if (i.malloc.size != 0) {
+      memset(ptr, 0, 8);
+    }
+    allocated_count++;
+    break;
+  }
+  case Instruction::Type::FREE: {
+    if (registers[reg] == nullptr) {
+      printf("reg = %d\n", (int)reg);
+      asm volatile ("int $3");
+    }
+    assert(registers[reg] != nullptr);
+    free(registers[reg]);
+    registers[reg] = nullptr;
+    allocated_count--;
+    break;
+  }
+  case Instruction::Type::MEMALIGN: {
+    allocated_count++;
+    auto ptr = memalign(i.malloc.align, i.malloc.size);
     if (ptr == nullptr) {
       abort();
     }
@@ -129,20 +161,10 @@ static void replay_instruction(const Instruction& i) {
     memset(ptr, 0, 8);
     break;
   }
-  case Instruction::Type::FREE: {
-    free(registers[reg]);
-    registers[reg] = nullptr;
-    break;
-  }
-  case Instruction::Type::MEMALIGN: {
-    auto ptr = memalign(i.malloc.align, i.malloc.size);
-    registers[reg] = ptr;
-    memset(ptr, 0, 8);
-    break;
-  }
   case Instruction::Type::REALLOC: {
     auto old_reg = reg;
     auto new_reg = i.realloc.new_reg;
+    assert(registers[old_reg] != nullptr);
     auto ptr = realloc(registers[old_reg], i.realloc.new_size);
     if (ptr == nullptr) {
       abort();
@@ -152,6 +174,8 @@ static void replay_instruction(const Instruction& i) {
     break;
   }
   case Instruction::Type::FREE_SIZED: {
+    assert(registers[reg] != nullptr);
+    allocated_count--;
 #if 0
     tc_free_sized(registers[reg], i.malloc.size);
 #else
@@ -336,6 +360,8 @@ int main(int argc, char **argv) {
 
   printf("\nprocessed total %lld malloc ops (aka instructions)\n",
          (long long) total_instructions);
+
+  printf("allocated still: %llu\n", (unsigned long long)allocated_count);
 
   return 0;
 }
