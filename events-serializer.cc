@@ -593,6 +593,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       const char* prev_ptr = last_barriers[last_barriers_index];
       s.unrealize_up_to(prev_ptr);
       last_barriers[last_barriers_index] = s.get_ptr();
+      // printf("\nBarrier at %p\n", s.get_ptr());
     }
 
     while (!heap.empty()) {
@@ -668,6 +669,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       } else {
         heap.pop();
         thread->in_pending_frees = true;
+        assert(state.pending_frees.count(wait_tok) == 0);
         state.pending_frees.insert({wait_tok, thread});
       }
 
@@ -702,6 +704,14 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       state.threads.erase(*thread);
     }
     state.to_die.swap(next_to_die);
+
+    // TMP TMP
+    for (const auto& a_thread : state.threads) {
+      assert(a_thread.bufs.empty());
+      assert(a_thread.active_stream.get() == nullptr);
+      assert(!a_thread.dead);
+      assert(!a_thread.in_pending_frees);
+    }
 
     receiver->Barrier();
   }

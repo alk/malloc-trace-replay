@@ -237,6 +237,9 @@ public:
   size_t frees{};
   size_t sized_frees{};
   size_t other{};
+  size_t barriers{};
+
+  const char* last_buf;
 
   bool process_one();
 };
@@ -263,8 +266,8 @@ bool EvCounter::process_one() {
     break;
   case EventsEncoder::kEventBuf:
     extra_words = 2;
+    last_buf = get_ptr();
     break;
-
   case EventsEncoder::kEventEnd:
     fprintf(stderr, "found end\n");
     return false;
@@ -359,4 +362,10 @@ int main(int argc, char **argv) {
   printf("frees = %zu\n", counter.frees);
   printf("sized_frees = %zu\n", counter.sized_frees);
   printf("other = %zu\n", counter.other);
+
+  printf("left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees);
+  printf("last_buf offset: %llu, total_size: %llu\n",
+         (unsigned long long)(counter.last_buf - m.GetBegin()),
+         (unsigned long long)(counter.get_ptr() - m.GetBegin()));
+  return 0;
 }

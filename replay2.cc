@@ -221,6 +221,14 @@ private:
   uint64_t total_instructions_{};
   uint64_t printed_instructions_{};
 
+public:
+  size_t mallocs{};
+  size_t frees{};
+  size_t sized_frees{};
+  size_t other{};
+  size_t barriers{};
+private:
+
   void dump(const Instruction& i) {
     fwrite_unlocked(&i, 1, sizeof(i), out_);
 
@@ -263,6 +271,7 @@ void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
   m.reg = reg;
   m.malloc.size = size;
   dump(m);
+  mallocs++;
 }
 
 void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
@@ -274,6 +283,7 @@ void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
   m.malloc.size = size;
   m.malloc.align = align;
   dump(m);
+  other++;
 }
 
 void SimpleReceiver::Realloc(uint64_t old_tok,
@@ -290,6 +300,7 @@ void SimpleReceiver::Realloc(uint64_t old_tok,
   r.realloc.new_reg = new_reg;
   r.realloc.new_size = new_size;
   dump(r);
+  other++;
 }
 
 void SimpleReceiver::Free(uint64_t tok) {
@@ -301,6 +312,7 @@ void SimpleReceiver::Free(uint64_t tok) {
   Instruction f(Instruction::Type::FREE);
   f.reg = old_reg;
   dump(f);
+  frees++;
 }
 
 void SimpleReceiver::FreeSized(uint64_t tok, uint64_t size) {
@@ -313,9 +325,11 @@ void SimpleReceiver::FreeSized(uint64_t tok, uint64_t size) {
   f.reg = old_reg;
   f.malloc.size = size;
   dump(f);
+  sized_frees++;
 }
 
 void SimpleReceiver::Barrier() {
+  barriers++;
 }
 
 bool SimpleReceiver::HasAllocated(uint64_t tok) {
@@ -388,8 +402,21 @@ int main(int argc, char **argv) {
   setvbuf(output, nullptr, _IOFBF, 256 << 10);
   SimpleReceiver receiver(output);
 
-  // ConstMapper m{mmap_mapper(fd)};
-  FDInputMapper m(fd);
+  ConstMapper m{mmap_mapper(fd)};
+  // FDInputMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
+
+  auto& counter = receiver;
+
+  printf("mallocs = %zu\n", counter.mallocs);
+  printf("frees = %zu\n", counter.frees);
+  printf("sized_frees = %zu\n", counter.sized_frees);
+  printf("other = %zu\n", counter.other);
+
+  printf("left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees);
+  // printf("last_buf offset: %llu, total_size: %llu\n",
+  //        (unsigned long long)(counter.last_buf - m.GetBegin()),
+  //        (unsigned long long)(counter.get_ptr() - m.GetBegin()));
+
 }

@@ -20,6 +20,14 @@ replay2_SOURCES = replay2.cc \
 	varint_codec.cc varint_codec.h instruction.h \
 	fd-input-mapper.h fd-input-mapper.cc
 
+noinst_PROGRAMS += events_tally
+
+events_tally_SOURCES = events-tally.cc \
+	malloc_trace_encoder.h \
+	varint_codec.cc varint_codec.h \
+	fd-input-mapper.h fd-input-mapper.cc
+
+
 @GENERATE_CHANGELOG_RULES@
 
 dist-hook: dist-ChangeLog
