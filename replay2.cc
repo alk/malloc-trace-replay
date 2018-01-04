@@ -238,15 +238,17 @@ private:
   AllocatedMap allocated_;
 
   uint64_t start_nanos_{nanos()};
-  uint64_t total_instructions_{};
   uint64_t printed_instructions_{};
 
 public:
   size_t mallocs{};
   size_t frees{};
   size_t sized_frees{};
-  size_t other{};
+  size_t reallocs{};
+  size_t memaligns{};
   size_t barriers{};
+
+  uint64_t total_instructions_{};
 private:
 
   void dump(const Instruction& i) {
@@ -303,7 +305,7 @@ void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
   m.malloc.size = size;
   m.malloc.align = align;
   dump(m);
-  other++;
+  memaligns++;
 }
 
 void SimpleReceiver::Realloc(uint64_t old_tok,
@@ -320,7 +322,7 @@ void SimpleReceiver::Realloc(uint64_t old_tok,
   r.realloc.new_reg = new_reg;
   r.realloc.new_size = new_size;
   dump(r);
-  other++;
+  reallocs++;
 }
 
 void SimpleReceiver::Free(uint64_t tok) {
@@ -432,12 +434,13 @@ int main(int argc, char **argv) {
   fprintf(stderr, "mallocs = %zu\n", counter.mallocs);
   fprintf(stderr, "frees = %zu\n", counter.frees);
   fprintf(stderr, "sized_frees = %zu\n", counter.sized_frees);
-  fprintf(stderr, "other = %zu\n", counter.other);
+  fprintf(stderr, "reallocs = %zu\n", counter.reallocs);
+  fprintf(stderr, "memaligns = %zu\n", counter.memaligns);
+  fprintf(stderr, "barriers = %zu\n", counter.barriers);
 
-  fprintf(stderr, "left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees);
-  // printf("last_buf offset: %llu, total_size: %llu\n",
-  //        (unsigned long long)(counter.last_buf - m.GetBegin()),
-  //        (unsigned long long)(counter.get_ptr() - m.GetBegin()));
+  fprintf(stderr, "left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees + counter.memaligns);
 
   receiver.DumpAllDeallocations();
+
+  fprintf(stderr, "total instructions dumped: %llu\n", (unsigned long long)counter.total_instructions_);
 }

@@ -368,6 +368,9 @@ int main(int argc, char **argv) {
     }
   }
 
+  replay_instruction(next_instr);
+  total_instructions++;
+
   printf("\nprocessed total %lld malloc ops (aka instructions)\n",
          (long long) total_instructions);
 
