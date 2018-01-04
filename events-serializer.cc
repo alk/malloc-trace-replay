@@ -390,6 +390,22 @@ struct InnerEvent {
   };
 };
 
+static size_t mallocs_decoded;
+static size_t frees_decoded;
+static size_t sized_frees_decoded;
+static size_t reallocs_decoded;
+static size_t memaligns_decoded;
+
+static __attribute__((destructor))
+void dump_stats() {
+  fprintf(stderr, "mallocs_decoded = %zu\n", mallocs_decoded);
+  fprintf(stderr, "frees_decoded = %zu\n", frees_decoded);
+  fprintf(stderr, "sized_frees_decoded = %zu\n", sized_frees_decoded);
+  fprintf(stderr, "reallocs_decoded = %zu\n", reallocs_decoded);
+  fprintf(stderr, "memaligns_decoded = %zu\n", memaligns_decoded);
+}
+
+
 class FullThreadState : public ThreadState {
 public:
   FullThreadState(uint64_t thread_id) : ThreadState(thread_id) {}
@@ -413,9 +429,11 @@ public:
     last_event.type = evtype;
     switch (evtype) {
     case EventsEncoder::kEventMalloc:
+      mallocs_decoded++;
       consume_malloc(&last_event.malloc, first_word);
       break;
     case EventsEncoder::kEventFree:
+      frees_decoded++;
       consume_free(&last_event.free, first_word);
       break;
     case EventsEncoder::kEventTok: {
@@ -425,14 +443,17 @@ public:
       return update_last_event_inner();
     }
     case EventsEncoder::kEventRealloc:
+      reallocs_decoded++;
       consume_realloc(&last_event.realloc,
                       first_word, active_stream->must_read_varint());
       break;
     case EventsEncoder::kEventMemalign:
+      memaligns_decoded++;
       consume_memalign(&last_event.memalign,
                       first_word, active_stream->must_read_varint());
       break;
     case EventsEncoder::kEventFreeSized:
+      sized_frees_decoded++;
       consume_free_sized(&last_event.free_sized,
                          first_word, active_stream->must_read_varint());
       break;
@@ -516,6 +537,7 @@ struct SerializeState {
     }
     heap.push(it->second);
     it->second->in_pending_frees = false;
+    // printf("\nwoke up thread %d via tok %d\n", (int)(it->second->thread_id),(int)tok);
     pending_frees.erase(it);
   }
 
@@ -601,7 +623,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       assert(thread->active_stream.get() != nullptr);
       assert(!thread->bufs.empty());
       uint64_t last_ts = thread->last_ts;
-      bool processed;
+      bool processed = false;
       constexpr uint64_t kEmptyTok = ~uint64_t{0};
       uint64_t new_tok = kEmptyTok;
       uint64_t wait_tok;
@@ -670,6 +692,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         heap.pop();
         thread->in_pending_frees = true;
         assert(state.pending_frees.count(wait_tok) == 0);
+        // printf("\nthread: %d goes to sleep for tok %d\n", (int)thread->thread_id, (int)wait_tok);
         state.pending_frees.insert({wait_tok, thread});
       }
 
@@ -705,21 +728,13 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
     }
     state.to_die.swap(next_to_die);
 
-    // TMP TMP
-    for (const auto& a_thread : state.threads) {
-      assert(a_thread.bufs.empty());
-      assert(a_thread.active_stream.get() == nullptr);
-      assert(!a_thread.dead);
-      assert(!a_thread.in_pending_frees);
-    }
-
     receiver->Barrier();
   }
 
-  for (const auto& a_thread : state.threads) {
-    assert(a_thread.bufs.empty());
-    assert(a_thread.active_stream.get() == nullptr);
-    assert(!a_thread.dead);
-    assert(!a_thread.in_pending_frees);
-  }
+  // for (const auto& a_thread : state.threads) {
+  //   assert(a_thread.bufs.empty());
+  //   assert(a_thread.active_stream.get() == nullptr);
+  //   assert(!a_thread.dead);
+  //   assert(!a_thread.in_pending_frees);
+  // }
 }

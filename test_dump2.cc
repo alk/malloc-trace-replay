@@ -135,7 +135,11 @@ static void replay_instruction(const Instruction& i) {
     assert(registers[reg] == nullptr);
     registers[reg] = ptr;
     if (i.malloc.size != 0) {
-      memset(ptr, 0, 8);
+      if (i.malloc.size < 4096) {
+        memset(ptr, 0, 8);
+      } else {
+        memset(ptr, 0, i.malloc.size);
+      }
     }
     allocated_count++;
     break;
@@ -158,7 +162,13 @@ static void replay_instruction(const Instruction& i) {
       abort();
     }
     registers[reg] = ptr;
-    memset(ptr, 0, 8);
+    if (i.malloc.size != 0) {
+      if (i.malloc.size < 4096) {
+        memset(ptr, 0, 8);
+      } else {
+        memset(ptr, 0, i.malloc.size);
+      }
+    }
     break;
   }
   case Instruction::Type::REALLOC: {
@@ -289,14 +299,6 @@ static inline __attribute__((always_inline)) bool buffer_read(int fd, void* ptr,
   return true;
 }
 
-static void WriteStringToFile(const std::string& s, const std::string& filename) {
-  FILE* fp = fopen(filename.c_str(), "w");
-  fwrite(s.data(), 1, s.length(), fp);
-  fclose(fp);
-}
-
-extern "C" __attribute__((weak)) char *MallocExtension_GetHeapSample_malloced();
-
 int main(int argc, char **argv) {
   mmap_registers();
   setup_malloc_state_fns();
@@ -371,7 +373,5 @@ int main(int argc, char **argv) {
 
   printf("allocated still: %llu\n", (unsigned long long)allocated_count);
 
-  char* heap_sample = MallocExtension_GetHeapSample_malloced();
-  WriteStringToFile(heap_sample, "dump.heap");
   return 0;
 }

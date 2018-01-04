@@ -124,6 +124,14 @@ public:
     return set_.size();
   }
 
+  template <typename T>
+  void EachElement(const T& body) {
+    for (auto &element : set_) {
+      Element* ptr = &element;
+      body(ptr);
+    }
+  }
+
 private:
   typedef unordered_multiset<Element,
                              // key_of_value<ElemenKeyOp>,
@@ -212,6 +220,18 @@ public:
   virtual void FreeSized(uint64_t tok, uint64_t size);
   virtual void Barrier();
   virtual bool HasAllocated(uint64_t tok);
+
+  void DumpAllDeallocations() {
+    int count = 0;
+    allocated_.EachElement([this, &count] (AllocatedMap::Element* el) {
+        Instruction f(Instruction::Type::FREE);
+        f.reg = el->reg;
+        dump(f);
+        count++;
+      });
+    fprintf(stderr, "\n\nFreed %d remaining map elements\n", count);
+  }
+
 private:
   FILE* out_;
   IdTree ids_space_;
@@ -402,21 +422,22 @@ int main(int argc, char **argv) {
   setvbuf(output, nullptr, _IOFBF, 256 << 10);
   SimpleReceiver receiver(output);
 
-  ConstMapper m{mmap_mapper(fd)};
-  // FDInputMapper m(fd);
+  // ConstMapper m{mmap_mapper(fd)};
+  FDInputMapper m(fd);
   // SerializeMallocEvents(&m, &printer);
   SerializeMallocEvents(&m, &receiver);
 
   auto& counter = receiver;
 
-  printf("mallocs = %zu\n", counter.mallocs);
-  printf("frees = %zu\n", counter.frees);
-  printf("sized_frees = %zu\n", counter.sized_frees);
-  printf("other = %zu\n", counter.other);
+  fprintf(stderr, "mallocs = %zu\n", counter.mallocs);
+  fprintf(stderr, "frees = %zu\n", counter.frees);
+  fprintf(stderr, "sized_frees = %zu\n", counter.sized_frees);
+  fprintf(stderr, "other = %zu\n", counter.other);
 
-  printf("left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees);
+  fprintf(stderr, "left allocated = %zu\n", counter.mallocs - counter.frees - counter.sized_frees);
   // printf("last_buf offset: %llu, total_size: %llu\n",
   //        (unsigned long long)(counter.last_buf - m.GetBegin()),
   //        (unsigned long long)(counter.get_ptr() - m.GetBegin()));
 
+  receiver.DumpAllDeallocations();
 }
