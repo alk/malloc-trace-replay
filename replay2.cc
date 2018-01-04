@@ -266,7 +266,7 @@ void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
 }
 
 void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
- auto reg = ids_space_.allocate_id();
+  auto reg = ids_space_.allocate_id();
   allocated_.Insert(tok, reg);
 
   Instruction m(Instruction::Type::MEMALIGN);
@@ -287,7 +287,7 @@ void SimpleReceiver::Realloc(uint64_t old_tok,
 
   Instruction r(Instruction::Type::REALLOC);
   r.reg = old_reg;
-  r.realloc.new_reg = old_reg;
+  r.realloc.new_reg = new_reg;
   r.realloc.new_size = new_size;
   dump(r);
 }
