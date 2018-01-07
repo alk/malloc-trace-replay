@@ -92,6 +92,7 @@ public:
   struct Element : public boost::intrusive::unordered_set_base_hook<> {
     uint64_t token;
     uint64_t reg;
+    uint64_t size;
   };
   struct TokenHasher {
     size_t operator()(uint64_t x) const {
@@ -119,7 +120,7 @@ public:
 
   Element* Lookup(uint64_t token);
   void Erase(Element *e);
-  void Insert(uint64_t token, uint64_t reg);
+  void Insert(uint64_t token, uint64_t reg, uint64_t size);
   size_t Size() {
     return set_.size();
   }
@@ -179,7 +180,7 @@ void AllocatedMap::Erase(AllocatedMap::Element* e) {
   delete e;
 }
 
-void AllocatedMap::Insert(uint64_t token, uint64_t reg) {
+void AllocatedMap::Insert(uint64_t token, uint64_t reg, uint64_t size) {
   assert(Lookup(token) == nullptr);
   if (set_.size() > buckets_size_ / 2) {
     new (buckets_.get() + buckets_size_) set_type::bucket_type[buckets_size_];
@@ -189,6 +190,7 @@ void AllocatedMap::Insert(uint64_t token, uint64_t reg) {
   auto e = new Element;
   e->token = token;
   e->reg = reg;
+  e->size = size;
   set_.insert(*e);
 }
 
@@ -293,7 +295,7 @@ void SimpleReceiver::SetTS(uint64_t ts, uint64_t cpu) {
 
 void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
   auto reg = ids_space_.allocate_id();
-  allocated_.Insert(tok, reg);
+  allocated_.Insert(tok, reg, size);
 
   Instruction m(Instruction::Type::MALLOC);
   m.reg = reg;
@@ -304,7 +306,7 @@ void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
 
 void SimpleReceiver::Memalign(uint64_t tok, uint64_t size, uint64_t align) {
   auto reg = ids_space_.allocate_id();
-  allocated_.Insert(tok, reg);
+  allocated_.Insert(tok, reg, size);
 
   Instruction m(Instruction::Type::MEMALIGN);
   m.reg = reg;
@@ -320,7 +322,7 @@ void SimpleReceiver::Realloc(uint64_t old_tok,
   auto new_reg = ids_space_.allocate_id();
   auto old_reg = e->reg;
   allocated_.Erase(e);
-  allocated_.Insert(new_tok, new_reg);
+  allocated_.Insert(new_tok, new_reg, new_size);
   ids_space_.free_id(old_reg);
 
   Instruction r(Instruction::Type::REALLOC);
@@ -334,11 +336,13 @@ void SimpleReceiver::Realloc(uint64_t old_tok,
 void SimpleReceiver::Free(uint64_t tok) {
   auto* e = allocated_.Lookup(tok);
   auto old_reg = e->reg;
+  auto size = e->size;
   allocated_.Erase(e);
   ids_space_.free_id(old_reg);
 
-  Instruction f(Instruction::Type::FREE);
+  Instruction f(Instruction::Type::FREE_SIZED);
   f.reg = old_reg;
+  f.malloc.size = size;
   dump(f);
   frees++;
 }
