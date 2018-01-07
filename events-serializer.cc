@@ -373,7 +373,9 @@ public:
   }
 
   void update_with_buf(OuterEvent *ev) {
-    last_cpu = ev->cpu;
+    if (!(ev->cpu & 512)) {
+      last_cpu = ev->cpu;
+    }
     last_ts = ev->ts;
   }
 };
@@ -395,6 +397,7 @@ static size_t frees_decoded;
 static size_t sized_frees_decoded;
 static size_t reallocs_decoded;
 static size_t memaligns_decoded;
+static size_t toks_decoded;
 
 static __attribute__((destructor))
 void dump_stats() {
@@ -403,6 +406,7 @@ void dump_stats() {
   fprintf(stderr, "sized_frees_decoded = %zu\n", sized_frees_decoded);
   fprintf(stderr, "reallocs_decoded = %zu\n", reallocs_decoded);
   fprintf(stderr, "memaligns_decoded = %zu\n", memaligns_decoded);
+  fprintf(stderr, "toks_decoded = %zu\n", memaligns_decoded);
 }
 
 
@@ -439,6 +443,7 @@ public:
     case EventsEncoder::kEventTok: {
       auto second_word = active_stream->must_read_varint();
       events::Tok tok;
+      toks_decoded++;
       consume_tok(&tok, first_word, second_word);
       return update_last_event_inner();
     }
@@ -516,17 +521,19 @@ struct SerializeState {
   static constexpr uint64_t kInvalidThreadID = ~uint64_t{0};
   uint64_t recv_thread_id = kInvalidThreadID;
   uint64_t recv_ts = 0;
+  uint64_t recv_cpu = 0;
 
   void maybe_switch_thread(EventsReceiver *receiver,
-                           uint64_t thread_id,
-                           uint64_t last_ts) {
+                           FullThreadState* thread) {
+    uint64_t thread_id = thread->thread_id;
     if (thread_id != recv_thread_id) {
-      receiver->SwitchThread(thread_id);
       recv_thread_id = thread_id;
+      receiver->SwitchThread(recv_thread_id);
     }
-    if (last_ts != recv_ts) {
-      receiver->SetTS(last_ts, 0);
-      recv_ts = last_ts;
+    if (thread->last_ts != recv_ts || thread->last_cpu != recv_cpu) {
+      recv_ts = thread->last_ts;
+      recv_cpu = thread->last_cpu;
+      receiver->SetTS(recv_ts, recv_cpu);
     }
   }
 
@@ -631,14 +638,14 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       switch (ev->type) {
       case EventsEncoder::kEventMalloc:
         new_tok = ev->malloc.token;
-        state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
+        state.maybe_switch_thread(receiver, thread);
         receiver->Malloc(ev->malloc.token,
                          ev->malloc.size);
         processed = true;
         break;
       case EventsEncoder::kEventMemalign:
         new_tok = ev->memalign.token;
-        state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
+        state.maybe_switch_thread(receiver, thread);
         receiver->Memalign(ev->memalign.token,
                            ev->memalign.size,
                            ev->memalign.alignment);
@@ -648,7 +655,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         wait_tok = ev->free.token;
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
-          state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
+          state.maybe_switch_thread(receiver, thread);
           receiver->Free(wait_tok);
         }
         break;
@@ -656,7 +663,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         wait_tok = ev->free_sized.token;
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
-          state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
+          state.maybe_switch_thread(receiver, thread);
           receiver->FreeSized(wait_tok, ev->free_sized.size);
         }
         break;
@@ -665,7 +672,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
           new_tok = ev->realloc.new_token;
-          state.maybe_switch_thread(receiver, thread->thread_id, last_ts);
+          state.maybe_switch_thread(receiver, thread);
           receiver->Realloc(ev->realloc.old_token,
                             ev->realloc.new_token, ev->realloc.new_size);
         }

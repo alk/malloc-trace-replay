@@ -51,21 +51,21 @@ public:
     target_->SetTS(ts, cpu);
   }
   void Malloc(uint64_t tok, uint64_t size) {
-    printf("Malloc(%zu, %zu)\n", (size_t)tok, (size_t)size);
+    // printf("Malloc(%zu, %zu)\n", (size_t)tok, (size_t)size);
     target_->Malloc(tok, size);
   }
   void Memalign(uint64_t tok, uint64_t size, uint64_t align) {
-    printf("Memalign(%zu, %zu, %zu)\n", (size_t)tok, (size_t)size, (size_t)align);
+    // printf("Memalign(%zu, %zu, %zu)\n", (size_t)tok, (size_t)size, (size_t)align);
     target_->Memalign(tok, size, align);
   }
   void Realloc(uint64_t old_tok,
                uint64_t new_tok, uint64_t new_size) {
-    printf("Realloc(%zu, %zu, %zu)\n",
-           (size_t)old_tok, (size_t)new_tok, (size_t)new_size);
+    // printf("Realloc(%zu, %zu, %zu)\n",
+           // (size_t)old_tok, (size_t)new_tok, (size_t)new_size);
     target_->Realloc(old_tok, new_tok, new_size);
   }
   void Free(uint64_t tok) {
-    printf("Free(%zu)\n", (size_t)tok);
+    // printf("Free(%zu)\n", (size_t)tok);
     target_->Free(tok);
   }
   void FreeSized(uint64_t tok, uint64_t size) {
@@ -247,6 +247,8 @@ public:
   size_t reallocs{};
   size_t memaligns{};
   size_t barriers{};
+  uint64_t last_ts{};
+  uint64_t last_cpu{};
 
   uint64_t total_instructions_{};
 private:
@@ -259,9 +261,11 @@ private:
       uint64_t total_nanos = nanos() - start_nanos_;
       printed_instructions_ = total_instructions_;
       fprintf(stderr,
-              "\rtotal_instructions = %lld; rate = %f ops/sec         \b\b\b\b\b\b\b\b\b",
+              "\rtotal_instructions = %lld; rate = %f ops/sec; last_ts = %f; cpu = %d         \b\b\b\b\b\b\b\b\b",
               (long long)total_instructions_,
-              (double)total_instructions_ * 1E9 / total_nanos);
+              (double)total_instructions_ * 1E9 / total_nanos,
+              last_ts * 1E-9,
+              (int)last_cpu);
       fflush(stderr);
     }
   }
@@ -283,6 +287,8 @@ void SimpleReceiver::SetTS(uint64_t ts, uint64_t cpu) {
   t.ts_cpu.ts = ts;
   t.ts_cpu.cpu = cpu;
   dump(t);
+  last_ts = ts;
+  last_cpu = cpu;
 }
 
 void SimpleReceiver::Malloc(uint64_t tok, uint64_t size) {
@@ -423,6 +429,7 @@ int main(int argc, char **argv) {
   FILE* output = fdopen(fd2, "w");
   setvbuf(output, nullptr, _IOFBF, 256 << 10);
   SimpleReceiver receiver(output);
+  // PrintReceiver printer(&receiver);
 
   // ConstMapper m{mmap_mapper(fd)};
   FDInputMapper m(fd);

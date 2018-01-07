@@ -90,6 +90,11 @@ static void delete_malloc_state(ThreadCacheState* malloc_state) {
   set_malloc_thread_cache(old);
 }
 
+static size_t thread_switches;
+static uint64_t last_cpu = 0xffffff;
+static size_t cpu_switches;
+static size_t ts_updates;
+
 static void handle_switch_thread(uint64_t thread_id) {
   assert(current_thread_id != thread_id);
   assert(thread_id != kInvalidThreadId);
@@ -103,6 +108,8 @@ static void handle_switch_thread(uint64_t thread_id) {
   if (ts != nullptr) {
     set_malloc_thread_cache(ts);
   }
+
+  thread_switches++;
 }
 
 static void handle_kill_thread() {
@@ -201,6 +208,9 @@ static void replay_instruction(const Instruction& i) {
     handle_switch_thread(i.switch_thread.thread_id);
     break;
   case Instruction::Type::SET_TS_CPU:
+    cpu_switches += int(i.ts_cpu.cpu != last_cpu);
+    ts_updates++;
+    last_cpu = i.ts_cpu.cpu;
     break; // do nothing
   default:
     abort();
@@ -373,6 +383,10 @@ int main(int argc, char **argv) {
 
   printf("\nprocessed total %lld malloc ops (aka instructions)\n",
          (long long) total_instructions);
+
+  printf("toal thread switches %zu\n", thread_switches);
+  printf("total cpu switches %zu\n", cpu_switches);
+  printf("total ts updates %zu\n", ts_updates);
 
   printf("allocated still: %llu\n", (unsigned long long)allocated_count);
 
