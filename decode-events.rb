@@ -23,7 +23,7 @@ module Events
     def_custom_attrs :thread_id, :tok
   end
   class FreeSized
-    def_custom_attrs :thread_id, :tok, :size
+    def_custom_attrs :thread_id, :tok
   end
   class Realloc
     def_custom_attrs :thread_id, :tok, :size, :old_tok
@@ -69,12 +69,24 @@ raise unless Helpers.leading_zeros_slow(0x9) == 0
 raise unless Helpers.leading_zeros_slow(0x90) == 4
 
 class EventsStream
-  @@leading_zeros = [9] + (1..256).map {|i| Helpers.leading_zeros_slow(i)}
+  @@leading_zeros = [0xff] + (1..256).map {|i| Helpers.leading_zeros_slow(i)}
   raise unless @@leading_zeros[0x9] == 0
   raise unless @@leading_zeros[0x90] == 4
 
   def read_varint
     b = @io.getbyte()
+
+    if b == 0
+      off = 0
+      8.times do
+        b |= (@io.getbyte() << off)
+        off += 8
+      end
+
+      printf "got 0x%016x\n", rv if LOG_VARINT
+      return rv
+    end
+
     bits = @@leading_zeros[b]
     raise "b = #{b}" unless bits
     off = 8
@@ -109,13 +121,10 @@ class EventsStream
       @prev_token = tok
       Events::Free.new(@thread_id, tok)
     end
-    def consume_free_sized(first_word, second_word)
+    def consume_free_sized(first_word)
       tok = Helpers.unzigzag(first_word >> 3) + @prev_token
       @prev_token = tok
-      sz = Helpers.unzigzag(second_word) + @prev_size
-      @prev_size = sz
-      sz = sz << 3
-      Events::FreeSized.new(@thread_id, tok, sz)
+      Events::FreeSized.new(@thread_id, tok)
     end
     def consume_realloc(first_word, second_word)
       sz = Helpers.unzigzag(first_word >> 3) + @prev_size
@@ -203,7 +212,7 @@ class EventsStream
 
       return Events::Buf.new(thread_id, ts, cpu, buf_size)
     when 4 # FreeSized
-      return @curr_thread.consume_free_sized(first, read_varint())
+      return @curr_thread.consume_free_sized(first)
     when 07 # Death. Yes, octal
       thread_id = first_hi
       ts, cpu = *read_ts_and_cpu()
