@@ -21,10 +21,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "varint_codec.h"
+#include "altvarint_codec.h"
 #include "malloc_trace_encoder.h"
 
-typedef tcmalloc::VarintCodec VarintCodec;
+typedef tcmalloc::AltVarintCodec AltVarintCodec;
 typedef tcmalloc::EventsEncoder EventsEncoder;
 
 namespace events {
@@ -37,7 +37,6 @@ namespace events {
   };
   struct FreeSized {
     uint64_t token;
-    uint64_t size;
   };
   struct Realloc {
     uint64_t old_token;
@@ -101,10 +100,9 @@ public:
 
 private:
   const uint64_t kRealizeSize = 1 << 20;
-  const size_t kMaxVarintSize = 10;
 
   bool has_at_least_varint() {
-    return ptr_ + kMaxVarintSize <= end_;
+    return ptr_ + AltVarintCodec::kMaxSize <= end_;
   }
 
   bool realize_more(uint64_t min_amount);
@@ -161,14 +159,14 @@ inline uint64_t MemStream::must_read_varint() {
   if (!has_at_least_varint()) {
     return read_varint_slow();
   }
-  VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
+  AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(ptr_);
   advance_by(res.advance);
   return res.value;
 }
 
 inline bool MemStream::try_read_varint(uint64_t* place) {
   if (has_at_least_varint()) {
-    VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
+    AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(ptr_);
     advance_by(res.advance);
     *place = res.value;
     return true;
@@ -193,12 +191,12 @@ uint64_t MemStream::read_varint_slow() {
     return must_read_varint();
   }
   // auto page_end_gap = (~reinterpret_cast<uintptr_t>(ptr_) + 1) & 4095;
-  // if (page_end_gap <= kMaxVarintSize) {
+  // if (page_end_gap <= AltVarintCodec::kMaxSize) {
   //   return must_read_varint();
   // }
-  char tmp[kMaxVarintSize];
+  char tmp[AltVarintCodec::kMaxSize];
   memcpy(tmp, ptr_, end_ - ptr_);
-  VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(tmp);
+  AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(tmp);
   advance_by(res.advance); // will abort if we've read past eof
   return res.value;
 }
@@ -346,9 +344,8 @@ public:
   }
 
   template <typename T>
-  void consume_free_sized(T *f, uint64_t first_word, uint64_t second_word) {
-    EventsEncoder::decode_free_sized(f, first_word, second_word,
-                                     &prev_token, &prev_size);
+  void consume_free_sized(T *f, uint64_t first_word) {
+    EventsEncoder::decode_free_sized(f, first_word, &prev_token);
   }
 
   template <typename T>
@@ -457,8 +454,7 @@ public:
       break;
     case EventsEncoder::kEventFreeSized:
       sized_frees_decoded++;
-      consume_free_sized(&last_event.free_sized,
-                         first_word, active_stream->must_read_varint());
+      consume_free_sized(&last_event.free_sized, first_word);
       break;
     default:
       panic("unknown type");
@@ -662,7 +658,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
           state.maybe_switch_thread(receiver, thread);
-          receiver->FreeSized(wait_tok, ev->free_sized.size);
+          receiver->FreeSized(wait_tok);
         }
         break;
       case EventsEncoder::kEventRealloc:

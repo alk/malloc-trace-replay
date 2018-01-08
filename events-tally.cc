@@ -20,13 +20,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "varint_codec.h"
+#include "altvarint_codec.h"
 #include "malloc_trace_encoder.h"
 #include "fd-input-mapper.h"
 
-typedef tcmalloc::VarintCodec VarintCodec;
+typedef tcmalloc::AltVarintCodec AltVarintCodec;
 typedef tcmalloc::EventsEncoder EventsEncoder;
-
 
 static void panic(const char *reason) {
   fprintf(stderr, "%s\n", reason);
@@ -136,14 +135,14 @@ inline uint64_t MemStream::must_read_varint() {
   if (!has_at_least_varint()) {
     return read_varint_slow();
   }
-  VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
+  AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(ptr_);
   advance_by(res.advance);
   return res.value;
 }
 
 inline bool MemStream::try_read_varint(uint64_t* place) {
   if (has_at_least_varint()) {
-    VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(ptr_);
+    AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(ptr_);
     advance_by(res.advance);
     *place = res.value;
     return true;
@@ -173,7 +172,7 @@ uint64_t MemStream::read_varint_slow() {
   // }
   char tmp[kMaxVarintSize];
   memcpy(tmp, ptr_, end_ - ptr_);
-  VarintCodec::DecodeResult<uint64_t> res = VarintCodec::decode_unsigned(tmp);
+  AltVarintCodec::DecodeResult<uint64_t> res = AltVarintCodec::decode_unsigned(tmp);
   advance_by(res.advance); // will abort if we've read past eof
   return res.value;
 }

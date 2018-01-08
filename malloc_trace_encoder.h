@@ -33,7 +33,7 @@
 
 #include <utility> // for std::pair
 
-#include "varint_codec.h"
+#include "altvarint_codec.h"
 
 namespace tcmalloc {
 
@@ -57,22 +57,25 @@ struct EventsEncoder {
   static const unsigned kExtTypeShift = 8;
   static const unsigned kExtTypeMask = 0xff;
 
+  static const int kTSShift = 10;
+  static const uint64_t kTSMask = ~((1ULL << kTSShift) - 1);
+
   typedef std::pair<uint64_t, uint64_t> pair;
   typedef std::pair<uint64_t, std::pair<uint64_t, uint64_t> > triple;
 
   static uint64_t bundle_ts_and_cpu(uint64_t ts, uint64_t cpu) {
-    return (ts & ~1023) | (cpu & 1023);
+    return (ts & kTSMask) | (cpu & ~kTSMask);
   }
 
   template <typename I1, typename I2>
   static void unbundle_ts_and_cpu(uint64_t word, I1 *ts, I2 *cpu) {
-    *ts = word & ~1023;
-    *cpu = word & 1023;
+    *ts = word & kTSMask;
+    *cpu = word & ~kTSMask;
   }
 
   static uint64_t encode_malloc(size_t _size, ssize_t *prev_size) {
     ssize_t size = static_cast<ssize_t>((_size + 7) >> 3);
-    uint64_t to_encode = VarintCodec::zigzag(size - *prev_size);
+    uint64_t to_encode = AltVarintCodec::zigzag(size - *prev_size);
     to_encode <<= kTypeShift;
     to_encode |= kEventMalloc;
     *prev_size = size;
@@ -80,36 +83,30 @@ struct EventsEncoder {
   }
 
   static uint64_t encode_free(uint64_t token, uint64_t *prev_token) {
-    uint64_t to_encode = VarintCodec::zigzag(token - *prev_token);
+    uint64_t to_encode = AltVarintCodec::zigzag(token - *prev_token);
     to_encode <<= kTypeShift;
     to_encode |= kEventFree;
     *prev_token = token;
     return to_encode;
   }
 
-  static pair encode_free_sized(uint64_t token, uint64_t _size,
-                                uint64_t *prev_token, ssize_t *prev_size) {
-    uint64_t first = VarintCodec::zigzag(token - *prev_token);
-    first <<= kTypeShift;
-    first |= kEventFreeSized;
-
-    ssize_t size = static_cast<ssize_t>((_size + 7) >> 3);
-    uint64_t second = VarintCodec::zigzag(size - *prev_size);
-
-    *prev_size = size;
+  static uint64_t encode_free_sized(uint64_t token, uint64_t *prev_token) {
+    uint64_t to_encode = AltVarintCodec::zigzag(token - *prev_token);
+    to_encode <<= kTypeShift;
+    to_encode |= kEventFreeSized;
     *prev_token = token;
-    return std::make_pair(first, second);
+    return to_encode;
   }
 
   static pair encode_realloc(uint64_t old_token, size_t new_size,
                              ssize_t *prev_size, uint64_t *prev_token) {
     ssize_t size = static_cast<ssize_t>((new_size + 7) >> 3);
-    uint64_t to_encode = VarintCodec::zigzag(size - *prev_size);
+    uint64_t to_encode = AltVarintCodec::zigzag(size - *prev_size);
     to_encode <<= kExtTypeShift;
     to_encode |= kEventRealloc;
     *prev_size = size;
 
-    uint64_t to_encode2 = VarintCodec::zigzag(old_token - *prev_token);
+    uint64_t to_encode2 = AltVarintCodec::zigzag(old_token - *prev_token);
     *prev_token = old_token;
     return std::make_pair(to_encode, to_encode2);
   }
@@ -117,7 +114,7 @@ struct EventsEncoder {
   static pair encode_memalign(size_t _size, size_t alignment,
                               ssize_t *prev_size) {
     ssize_t size = static_cast<ssize_t>((_size + 7) >> 3);
-    uint64_t to_encode = VarintCodec::zigzag(size - *prev_size);
+    uint64_t to_encode = AltVarintCodec::zigzag(size - *prev_size);
     to_encode <<= kExtTypeShift;
     to_encode |= kEventMemalign;
     *prev_size = size;
@@ -161,7 +158,7 @@ struct EventsEncoder {
   template <typename T>
   static void decode_malloc(T *m, uint64_t first_word,
                             uint64_t *prev_size, uint64_t *malloc_tok_seq) {
-    uint64_t sz = VarintCodec::unzigzag(first_word >> kTypeShift) + *prev_size;
+    uint64_t sz = AltVarintCodec::unzigzag(first_word >> kTypeShift) + *prev_size;
     *prev_size = sz;
     sz = sz << 3;
     m->size = sz;
@@ -171,34 +168,30 @@ struct EventsEncoder {
   template <typename T>
   static void decode_free(T *f, uint64_t first_word,
                           uint64_t *prev_token) {
-    uint64_t tok = VarintCodec::unzigzag(first_word >> kTypeShift) + *prev_token;
+    uint64_t tok = AltVarintCodec::unzigzag(first_word >> kTypeShift) + *prev_token;
     *prev_token = tok;
     f->token = tok;
   }
 
   template <typename T>
   static void decode_free_sized(T *f,
-                                uint64_t first_word, uint64_t second_word,
-                                uint64_t *prev_token, uint64_t *prev_size) {
-    uint64_t tok = VarintCodec::unzigzag(first_word >> kTypeShift) + *prev_token;
+                                uint64_t first_word,
+                                uint64_t *prev_token) {
+    uint64_t tok = AltVarintCodec::unzigzag(first_word >> kTypeShift) + *prev_token;
     *prev_token = tok;
     f->token = tok;
-    uint64_t sz = VarintCodec::unzigzag(second_word) + *prev_size;
-    *prev_size = sz;
-    sz = sz << 3;
-    f->size = sz;
   }
 
   template <typename T>
   static void decode_realloc(T *r, uint64_t first_word, uint64_t second_word,
                              uint64_t *prev_size, uint64_t *prev_token, uint64_t *malloc_tok_seq) {
-    uint64_t sz = VarintCodec::unzigzag(first_word >> kExtTypeShift) + *prev_size;
+    uint64_t sz = AltVarintCodec::unzigzag(first_word >> kExtTypeShift) + *prev_size;
     *prev_size = sz;
     sz = sz << 3;
     r->new_size = sz;
     r->new_token = (*malloc_tok_seq)++;
 
-    uint64_t tok = VarintCodec::unzigzag(second_word) + *prev_token;
+    uint64_t tok = AltVarintCodec::unzigzag(second_word) + *prev_token;
     *prev_token = tok;
     r->old_token = tok;
   }
@@ -206,7 +199,7 @@ struct EventsEncoder {
   template <typename T>
   static void decode_memalign(T *m, uint64_t first_word, uint64_t second_word,
                               uint64_t *prev_size, uint64_t *malloc_tok_seq) {
-    uint64_t sz = VarintCodec::unzigzag(first_word >> kExtTypeShift) + *prev_size;
+    uint64_t sz = AltVarintCodec::unzigzag(first_word >> kExtTypeShift) + *prev_size;
     *prev_size = sz;
     sz = sz << 3;
     m->size = sz;

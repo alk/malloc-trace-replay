@@ -38,46 +38,45 @@ public:
   PrintReceiver(EventsReceiver* target) : target_(target) {}
   ~PrintReceiver() {}
 
-  void KillCurrentThread() {
+  void KillCurrentThread() override {
     printf("KillCurrentThread\n");
     target_->KillCurrentThread();
   }
-  void SwitchThread(uint64_t thread_id) {
+  void SwitchThread(uint64_t thread_id) override {
     printf("SwitchThread(%zu)\n", (size_t)thread_id);
     target_->SwitchThread(thread_id);
   }
-  void SetTS(uint64_t ts, uint64_t cpu) {
+  void SetTS(uint64_t ts, uint64_t cpu) override {
     printf("SetTS(%zu, %zu)\n", (size_t)ts, (size_t)cpu);
     target_->SetTS(ts, cpu);
   }
-  void Malloc(uint64_t tok, uint64_t size) {
-    // printf("Malloc(%zu, %zu)\n", (size_t)tok, (size_t)size);
+  void Malloc(uint64_t tok, uint64_t size) override {
+    printf("Malloc(%zu, %zu)\n", (size_t)tok, (size_t)size);
     target_->Malloc(tok, size);
   }
-  void Memalign(uint64_t tok, uint64_t size, uint64_t align) {
-    // printf("Memalign(%zu, %zu, %zu)\n", (size_t)tok, (size_t)size, (size_t)align);
+  void Memalign(uint64_t tok, uint64_t size, uint64_t align) override {
+    printf("Memalign(%zu, %zu, %zu)\n", (size_t)tok, (size_t)size, (size_t)align);
     target_->Memalign(tok, size, align);
   }
   void Realloc(uint64_t old_tok,
-               uint64_t new_tok, uint64_t new_size) {
-    // printf("Realloc(%zu, %zu, %zu)\n",
-           // (size_t)old_tok, (size_t)new_tok, (size_t)new_size);
+               uint64_t new_tok, uint64_t new_size) override {
+    printf("Realloc(%zu, %zu, %zu)\n",
+           (size_t)old_tok, (size_t)new_tok, (size_t)new_size);
     target_->Realloc(old_tok, new_tok, new_size);
   }
-  void Free(uint64_t tok) {
-    // printf("Free(%zu)\n", (size_t)tok);
+  void Free(uint64_t tok) override {
+    printf("Free(%zu)\n", (size_t)tok);
     target_->Free(tok);
   }
-  void FreeSized(uint64_t tok, uint64_t size) {
-    printf("FreeSized(%zu, %zu)\n",
-           (size_t)tok, (size_t)size);
-    target_->FreeSized(tok, size);
+  void FreeSized(uint64_t tok) override {
+    printf("FreeSized(%zu)\n", (size_t)tok);
+    target_->FreeSized(tok);
   }
-  void Barrier() {
+  void Barrier() override {
     printf("Barrier\n");
     target_->Barrier();
   }
-  bool HasAllocated(uint64_t tok) {
+  bool HasAllocated(uint64_t tok) override {
     return target_->HasAllocated(tok);
   }
 
@@ -207,21 +206,21 @@ uint64_t nanos() {
 class SimpleReceiver : public EventsReceiver {
 public:
   SimpleReceiver(FILE *out) : out_(out) {}
-  ~SimpleReceiver() noexcept {
+  ~SimpleReceiver() noexcept override {
     fprintf(stderr, "left allocated: %zu\n", allocated_.Size());
   }
 
-  virtual void KillCurrentThread();
-  virtual void SwitchThread(uint64_t thread_id);
-  virtual void SetTS(uint64_t ts, uint64_t cpu);
-  virtual void Malloc(uint64_t tok, uint64_t size);
-  virtual void Memalign(uint64_t tok, uint64_t size, uint64_t align);
-  virtual void Realloc(uint64_t old_tok,
-                       uint64_t new_tok, uint64_t new_size);
-  virtual void Free(uint64_t tok);
-  virtual void FreeSized(uint64_t tok, uint64_t size);
-  virtual void Barrier();
-  virtual bool HasAllocated(uint64_t tok);
+  void KillCurrentThread() override;
+  void SwitchThread(uint64_t thread_id) override;
+  void SetTS(uint64_t ts, uint64_t cpu) override;
+  void Malloc(uint64_t tok, uint64_t size) override;
+  void Memalign(uint64_t tok, uint64_t size, uint64_t align) override;
+  void Realloc(uint64_t old_tok,
+               uint64_t new_tok, uint64_t new_size) override;
+  void Free(uint64_t tok) override;
+  void FreeSized(uint64_t tok) override;
+  void Barrier() override;
+  bool HasAllocated(uint64_t tok) override;
 
   void DumpAllDeallocations() {
     int count = 0;
@@ -347,9 +346,10 @@ void SimpleReceiver::Free(uint64_t tok) {
   frees++;
 }
 
-void SimpleReceiver::FreeSized(uint64_t tok, uint64_t size) {
+void SimpleReceiver::FreeSized(uint64_t tok) {
   auto* e = allocated_.Lookup(tok);
   auto old_reg = e->reg;
+  auto size = e->size;
   allocated_.Erase(e);
   ids_space_.free_id(old_reg);
 
