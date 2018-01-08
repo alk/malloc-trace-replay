@@ -373,9 +373,7 @@ public:
   }
 
   void update_with_buf(OuterEvent *ev) {
-    if (!(ev->cpu & 512)) {
-      last_cpu = ev->cpu;
-    }
+    last_cpu = ev->cpu;
     last_ts = ev->ts;
   }
 };
