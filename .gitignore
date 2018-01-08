@@ -15,9 +15,9 @@
 /config.sub
 /debian/changelog
 /events_tally
-/replay2
+/postprocess
+/replay
 /test-driver
-/test_dump2
 Makefile
 Makefile.in
 aclocal.m4

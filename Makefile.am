@@ -7,14 +7,14 @@ AM_LDFLAGS =  -Wl,--no-as-needed -ldl -pthread
 LD_RUN_PATH = @LD_RUN_PATH@
 export LD_RUN_PATH
 
-noinst_PROGRAMS = test_dump2
+noinst_PROGRAMS = replay
 
-test_dump2_SOURCES = test_dump2.cc \
+replay_SOURCES = replay.cc \
 	fd-input-mapper.h fd-input-mapper.cc
 
-noinst_PROGRAMS += replay2
+noinst_PROGRAMS += postprocess
 
-replay2_SOURCES = replay2.cc \
+postprocess_SOURCES = postprocess.cc \
 	events-serializer.h events-serializer.cc \
 	id_tree.h malloc_trace_encoder.h \
 	altvarint_codec.cc altvarint_codec.h instruction.h \
