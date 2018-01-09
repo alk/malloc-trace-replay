@@ -1,12 +1,60 @@
-This is replay part for malloc-tracing facility (see
-https://github.com/alk/gperftools/tree/wip-malloc-tracing)
+This is replay part for malloc-tracing facility. Matching trace
+capturing part is in gperftools branch at
+https://github.com/alk/gperftools/tree/wip-malloc-tracing.
 
-After getting trace like this:
+This tracing facility is relatively carefully crafted to offer:
 
-$ LD_PRELOAD=$PREFIX/lib/libtcmalloc_minimal_tracing.so TCMALLOC_TRACE_OUTPOUT=file.lz4 ./your-program
+a) low overhead of tracing, so that program's runtime behavior is
+mostly preserved and captured
 
-Recommended usage is like this:
+b) no artifical serialization of malloc events. We order thing as
+needed at postprocessing time.
 
-$ ./postprocess raw-trace-file | ./bump-pipes.rb lz4 >processed-trace.lz4
+c) relatively low disk bandwidth needed for saving real traces at full
+serving speed. We expect under 100 MiB/sec for even quite large (tens
+of cores) processes.
 
-$ dd if=processed-trace.lz4 bs=1M iflag=direct | ./bump-pipes.rb lz4 -d | ./replay
+
+Brief description of how to use it
+==================================
+
+First check out wip-malloc-tracing branch. Make sure you have lz4
+library and cli installed. Then run:
+
+$ ./autogen && ./configure --prefix=<your install path of choice> --enable-trace-compression
+
+(optionally add --enable-minimal or --disable-static at your taste)
+
+$ make -j<whatever> install
+
+This will install libtcmalloc_minimal_tracing.so in addition to usual gperftools libraries.
+
+Then get trace like this:
+
+$ LD_PRELOAD=$PREFIX/lib/libtcmalloc_minimal_tracing.so TCMALLOC_TRACE_OUTPUT=raw-trace-file.lz4 ./your-program
+
+Raw trace file needs to be postprocessed with program in
+malloc-trace-replay. Like this:
+
+$ ./postprocess raw-trace-file.lz4 /dev/stdout | ./bump-pipes.rb lz4 >processed-trace.lz4
+
+It is good idea to link postprocess with tcmalloc for some speed gain.
+
+./bump-pipes increases Linux pipe buffer size. Given that lz4 cli tool
+reads data in small chunks it really helps parallelize processing. More
+so for replay part where throughput from compressor matters.
+
+I usually run replay like this:
+
+$ dd if=processed-trace.lz4 bs=1M iflag=direct | ./bump-pipes.rb lz4 -d | LD_PRELOAD=$PREFIX/lib/libtcmalloc_minimal.so ./replay
+
+bump-pipes and DIRECT_IO help having steady consistent replay
+bandwidth particularly when processed traces are much larger that
+system's ram. My system even needs raised system-level maximum pipe
+size (/proc/sys/fs/pipe-max-size) to keep replay running at 100% cpu.
+
+Note that as part of wip-malloc-tracing branch, tcmalloc also adds
+couple new API calls to switch thread caches without switching
+threads. And replay is using this API to better simulate thread caches
+performance. NO_THREAD_CACHE_SWITCH environment variable can be used
+to disable thread cache switching.
