@@ -28,8 +28,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef MALLOC_TRACE_ENCODER_H
-#define MALLOC_TRACE_ENCODER_H
+#ifndef TCMALLOC_MALLOC_TRACE_ENCODER_H_
+#define TCMALLOC_MALLOC_TRACE_ENCODER_H_
 
 #include <utility> // for std::pair
 
@@ -37,7 +37,7 @@
 
 namespace tcmalloc {
 
-struct EventsEncoder {
+struct MallocTraceEncoder {
   static const unsigned kEventMalloc = 0x00;
   static const unsigned kEventFree = 0x01;
   static const unsigned kEventTok = 0x02;
@@ -238,4 +238,4 @@ struct EventsEncoder {
 
 } // namespace tcmalloc
 
-#endif
+#endif  // TCMALLOC_MALLOC_TRACE_ENCODER_H_

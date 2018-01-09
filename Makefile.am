@@ -16,14 +16,14 @@ noinst_PROGRAMS += postprocess
 
 postprocess_SOURCES = postprocess.cc \
 	events-serializer.h events-serializer.cc \
-	id_tree.h malloc_trace_encoder.h \
+	id_tree.h malloc_trace_encoder.h malloc_trace_encoder.cc \
 	altvarint_codec.cc altvarint_codec.h instruction.h \
 	fd-input-mapper.h fd-input-mapper.cc
 
 noinst_PROGRAMS += events_tally
 
 events_tally_SOURCES = events-tally.cc \
-	malloc_trace_encoder.h \
+	malloc_trace_encoder.h malloc_trace_encoder.cc \
 	altvarint_codec.cc altvarint_codec.h \
 	fd-input-mapper.h fd-input-mapper.cc
 

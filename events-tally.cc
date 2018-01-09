@@ -24,8 +24,8 @@
 #include "malloc_trace_encoder.h"
 #include "fd-input-mapper.h"
 
-typedef tcmalloc::AltVarintCodec AltVarintCodec;
-typedef tcmalloc::EventsEncoder EventsEncoder;
+using tcmalloc::AltVarintCodec;
+using tcmalloc::MallocTraceEncoder;
 
 static void panic(const char *reason) {
   fprintf(stderr, "%s\n", reason);
@@ -255,43 +255,43 @@ bool EvCounter::process_one() {
   if (!ok) {
     return false;
   }
-  unsigned evtype = EventsEncoder::decode_type(first_word);
+  unsigned evtype = MallocTraceEncoder::decode_type(first_word);
 
   int extra_words = 0;
 
   switch (evtype) {
-  case EventsEncoder::kEventDeath:
+  case MallocTraceEncoder::kEventDeath:
     extra_words = 1;
     break;
-  case EventsEncoder::kEventBuf:
+  case MallocTraceEncoder::kEventBuf:
     extra_words = 2;
     last_buf = get_ptr();
     break;
-  case EventsEncoder::kEventEnd:
+  case MallocTraceEncoder::kEventEnd:
     fprintf(stderr, "found end\n");
     return false;
     break;
-  case EventsEncoder::kEventSyncBarrier:
+  case MallocTraceEncoder::kEventSyncBarrier:
     extra_words = 1;
     break;
-  case EventsEncoder::kEventMalloc:
+  case MallocTraceEncoder::kEventMalloc:
     mallocs++;
     break;
-  case EventsEncoder::kEventFree:
+  case MallocTraceEncoder::kEventFree:
     frees++;
     break;
-  case EventsEncoder::kEventFreeSized:
+  case MallocTraceEncoder::kEventFreeSized:
     extra_words = 1;
     sized_frees++;
     break;
-  case EventsEncoder::kEventTok:
+  case MallocTraceEncoder::kEventTok:
     extra_words = 1;
     break;
-  case EventsEncoder::kEventRealloc:
+  case MallocTraceEncoder::kEventRealloc:
     extra_words = 1;
     other++;
     break;
-  case EventsEncoder::kEventMemalign:
+  case MallocTraceEncoder::kEventMemalign:
     extra_words = 1;
     other++;
     break;

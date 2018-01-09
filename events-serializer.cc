@@ -24,8 +24,8 @@
 #include "altvarint_codec.h"
 #include "malloc_trace_encoder.h"
 
-typedef tcmalloc::AltVarintCodec AltVarintCodec;
-typedef tcmalloc::EventsEncoder EventsEncoder;
+using tcmalloc::AltVarintCodec;
+using tcmalloc::MallocTraceEncoder;
 
 namespace events {
   struct Malloc {
@@ -271,15 +271,15 @@ bool OuterEvStream::next(OuterEvent *ev) {
   if (!ok) {
     return false;
   }
-  unsigned evtype = EventsEncoder::decode_type(first_word);
+  unsigned evtype = MallocTraceEncoder::decode_type(first_word);
   ev->type = evtype;
 
   switch (evtype) {
-    case EventsEncoder::kEventDeath: {
-      EventsEncoder::decode_death(ev, first_word, must_read_varint());
+    case MallocTraceEncoder::kEventDeath: {
+      MallocTraceEncoder::decode_death(ev, first_word, must_read_varint());
       break;
     }
-    case EventsEncoder::kEventBuf: {
+    case MallocTraceEncoder::kEventBuf: {
       uint64_t second_word;
       uint64_t third_word;
       ok = try_read_varint(&second_word);
@@ -292,7 +292,7 @@ bool OuterEvStream::next(OuterEvent *ev) {
       }
 
       BufEvent buf;
-      EventsEncoder::decode_buffer(&buf, first_word, second_word, third_word);
+      MallocTraceEncoder::decode_buffer(&buf, first_word, second_word, third_word);
       ev->thread_id = buf.thread_id;
       ev->ts = buf.ts;
       ev->cpu = buf.cpu;
@@ -303,15 +303,15 @@ bool OuterEvStream::next(OuterEvent *ev) {
       ev->buf_end = ev->buf_start + buf.size;
       break;
     }
-    case EventsEncoder::kEventEnd:
+    case MallocTraceEncoder::kEventEnd:
       break;
-    case EventsEncoder::kEventSyncBarrier: {
+    case MallocTraceEncoder::kEventSyncBarrier: {
       uint64_t second_word;
       ok = try_read_varint(&second_word);
       if (!ok) {
         return false;
       }
-      EventsEncoder::decode_sync_barrier(ev, first_word, second_word);
+      MallocTraceEncoder::decode_sync_barrier(ev, first_word, second_word);
       break;
     }
   default:
@@ -335,35 +335,35 @@ public:
 
   template <typename T>
   void consume_malloc(T *m, uint64_t first_word) {
-    EventsEncoder::decode_malloc(m, first_word, &prev_size, &malloc_tok_seq);
+    MallocTraceEncoder::decode_malloc(m, first_word, &prev_size, &malloc_tok_seq);
   }
 
   template <typename T>
   void consume_free(T *f, uint64_t first_word) {
-    EventsEncoder::decode_free(f, first_word, &prev_token);
+    MallocTraceEncoder::decode_free(f, first_word, &prev_token);
   }
 
   template <typename T>
   void consume_free_sized(T *f, uint64_t first_word) {
-    EventsEncoder::decode_free_sized(f, first_word, &prev_token);
+    MallocTraceEncoder::decode_free_sized(f, first_word, &prev_token);
   }
 
   template <typename T>
   void consume_realloc(T *r, uint64_t first_word, uint64_t second_word) {
-    EventsEncoder::decode_realloc(r, first_word, second_word,
-                                  &prev_size, &prev_token, &malloc_tok_seq);
+    MallocTraceEncoder::decode_realloc(r, first_word, second_word,
+                                       &prev_size, &prev_token, &malloc_tok_seq);
   }
 
   template <typename T>
   void consume_memalign(T *m, uint64_t first_word, uint64_t second_word) {
-    EventsEncoder::decode_memalign(m, first_word, second_word,
-                                   &prev_size, &malloc_tok_seq);
+    MallocTraceEncoder::decode_memalign(m, first_word, second_word,
+                                        &prev_size, &malloc_tok_seq);
   }
 
   template <typename T>
   void consume_tok(T *ev, uint64_t first_word,
                    uint64_t second_word) {
-    EventsEncoder::decode_token(ev, first_word, second_word);
+    MallocTraceEncoder::decode_token(ev, first_word, second_word);
     last_cpu = ev->cpu;
     last_ts = ev->ts;
     malloc_tok_seq = ev->token_base;
@@ -424,35 +424,35 @@ public:
     }
 
     uint64_t first_word = active_stream->must_read_varint();
-    unsigned evtype = EventsEncoder::decode_type(first_word);
+    unsigned evtype = MallocTraceEncoder::decode_type(first_word);
     last_event.type = evtype;
     switch (evtype) {
-    case EventsEncoder::kEventMalloc:
+    case MallocTraceEncoder::kEventMalloc:
       mallocs_decoded++;
       consume_malloc(&last_event.malloc, first_word);
       break;
-    case EventsEncoder::kEventFree:
+    case MallocTraceEncoder::kEventFree:
       frees_decoded++;
       consume_free(&last_event.free, first_word);
       break;
-    case EventsEncoder::kEventTok: {
+    case MallocTraceEncoder::kEventTok: {
       auto second_word = active_stream->must_read_varint();
       events::Tok tok;
       toks_decoded++;
       consume_tok(&tok, first_word, second_word);
       return update_last_event_inner();
     }
-    case EventsEncoder::kEventRealloc:
+    case MallocTraceEncoder::kEventRealloc:
       reallocs_decoded++;
       consume_realloc(&last_event.realloc,
                       first_word, active_stream->must_read_varint());
       break;
-    case EventsEncoder::kEventMemalign:
+    case MallocTraceEncoder::kEventMemalign:
       memaligns_decoded++;
       consume_memalign(&last_event.memalign,
                       first_word, active_stream->must_read_varint());
       break;
-    case EventsEncoder::kEventFreeSized:
+    case MallocTraceEncoder::kEventFreeSized:
       sized_frees_decoded++;
       consume_free_sized(&last_event.free_sized, first_word);
       break;
@@ -573,12 +573,12 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         seen_end = true;
         break;
       }
-      if (ev.type == EventsEncoder::kEventEnd
-          || ev.type == EventsEncoder::kEventSyncBarrier) {
+      if (ev.type == MallocTraceEncoder::kEventEnd
+          || ev.type == MallocTraceEncoder::kEventSyncBarrier) {
         break;
       }
       switch (ev.type) {
-      case EventsEncoder::kEventBuf: {
+      case MallocTraceEncoder::kEventBuf: {
         FullThreadState *thread = state.find_thread(ev.thread_id, true);
         assert(!thread->dead);
         bool was_empty = false;
@@ -598,7 +598,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         }
         break;
       }
-      case EventsEncoder::kEventDeath: {
+      case MallocTraceEncoder::kEventDeath: {
         FullThreadState *thread = state.find_thread(ev.thread_id, false);
         assert(!thread->dead);
         thread->dead = true;
@@ -609,7 +609,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
         panic("unknown type");
       }
     }
-    if (ev.type == EventsEncoder::kEventEnd) {
+    if (ev.type == MallocTraceEncoder::kEventEnd) {
       seen_end = true;
     } else {
       last_barriers_index = (last_barriers_index + 1) % 2;
@@ -630,14 +630,14 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
       uint64_t wait_tok;
       InnerEvent *ev = &thread->last_event;
       switch (ev->type) {
-      case EventsEncoder::kEventMalloc:
+      case MallocTraceEncoder::kEventMalloc:
         new_tok = ev->malloc.token;
         state.maybe_switch_thread(receiver, thread);
         receiver->Malloc(ev->malloc.token,
                          ev->malloc.size);
         processed = true;
         break;
-      case EventsEncoder::kEventMemalign:
+      case MallocTraceEncoder::kEventMemalign:
         new_tok = ev->memalign.token;
         state.maybe_switch_thread(receiver, thread);
         receiver->Memalign(ev->memalign.token,
@@ -645,7 +645,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
                            ev->memalign.alignment);
         processed = true;
         break;
-      case EventsEncoder::kEventFree:
+      case MallocTraceEncoder::kEventFree:
         wait_tok = ev->free.token;
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
@@ -653,7 +653,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
           receiver->Free(wait_tok);
         }
         break;
-      case EventsEncoder::kEventFreeSized:
+      case MallocTraceEncoder::kEventFreeSized:
         wait_tok = ev->free_sized.token;
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
@@ -661,7 +661,7 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
           receiver->FreeSized(wait_tok);
         }
         break;
-      case EventsEncoder::kEventRealloc:
+      case MallocTraceEncoder::kEventRealloc:
         wait_tok = ev->realloc.old_token;
         if (receiver->HasAllocated(wait_tok)) {
           processed = true;
