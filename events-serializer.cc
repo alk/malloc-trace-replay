@@ -731,11 +731,4 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
 
     receiver->Barrier();
   }
-
-  // for (const auto& a_thread : state.threads) {
-  //   assert(a_thread.bufs.empty());
-  //   assert(a_thread.active_stream.get() == nullptr);
-  //   assert(!a_thread.dead);
-  //   assert(!a_thread.in_pending_frees);
-  // }
 }
