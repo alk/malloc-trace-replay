@@ -1,0 +1,12 @@
+This is replay part for malloc-tracing facility (see
+https://github.com/alk/gperftools/tree/wip-malloc-tracing)
+
+After getting trace like this:
+
+$ LD_PRELOAD=$PREFIX/lib/libtcmalloc_minimal_tracing.so TCMALLOC_TRACE_OUTPOUT=file.lz4 ./your-program
+
+Recommended usage is like this:
+
+$ ./postprocess raw-trace-file | ./bump-pipes.rb lz4 >processed-trace.lz4
+
+$ dd if=processed-trace.lz4 bs=1M iflag=direct | ./bump-pipes.rb lz4 -d | ./replay
