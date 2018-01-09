@@ -558,6 +558,18 @@ void SerializeMallocEvents(Mapper* mapper, EventsReceiver* receiver) {
   OuterEvStream s(mapper);
   SerializeState state;
 
+  {
+    uint32_t magic = MallocTraceEncoder::kMagic;
+    uint32_t actual_magic;
+    const char* magic_ptr = s.get_ptr();
+    s.advance_by(sizeof(magic));
+    memcpy(&actual_magic, magic_ptr, sizeof(actual_magic));
+    if (actual_magic != magic) {
+      fprintf(stderr, "magic: 0x%08x\n", actual_magic);
+      panic("magic header is missing");
+    }
+  }
+
   auto& heap = state.heap;
 
   bool seen_end = false;
